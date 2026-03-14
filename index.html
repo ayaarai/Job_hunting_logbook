@@ -4,19 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>企業選考ログ</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#2563EB', 50: '#EFF6FF', 100: '#DBEAFE', 500: '#3B82F6', 600: '#2563EB', 700: '#1D4ED8' }
+          },
+          fontFamily: { sans: ['Inter', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    .fade-in { animation: fadeIn 0.2s ease-in; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    body { font-family: 'Inter', sans-serif; }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .card-hover { transition: box-shadow 0.2s ease, transform 0.15s ease; }
+    .card-hover:hover { box-shadow: 0 10px 25px -5px rgba(37,99,235,0.12), 0 4px 10px -3px rgba(37,99,235,0.08); transform: translateY(-1px); }
+    select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 16px; padding-right: 40px !important; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
 <div id="root"></div>
 
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script type="text/babel">
 const { useState, useEffect } = React;
 
@@ -49,15 +65,15 @@ const INITIAL_LOGS = [
     company: "フューチャー工業",
     route: "直接応募",
     agent: "",
-    stage: "書類選考",
-    interviewDate: "",
-    interviewer: "",
-    memo: "",
+    stage: "内定",
+    interviewDate: "2026-03-08",
+    interviewer: "人事部 山田",
+    memo: "条件交渉中。入社日は4月1日希望。",
     createdAt: "2026-03-08T14:00:00Z",
   },
 ];
 
-// ─── Mock API ─────────────────────────────────────────────────────────────────
+// ─── Local Storage Hook ────────────────────────────────────────────────────────
 function useLogs() {
   const [logs, setLogs] = useState(() => {
     try {
@@ -75,7 +91,6 @@ function useLogs() {
   const addLog = (data) => {
     const newLog = { ...data, id: Date.now().toString(), createdAt: new Date().toISOString() };
     setLogs((prev) => [newLog, ...prev]);
-    return newLog;
   };
 
   const updateLog = (id, data) => {
@@ -93,42 +108,22 @@ function useLogs() {
 const ROUTES = ["エージェント", "直接応募", "LinkedIn", "リファラル", "その他"];
 const STAGES = ["カジュアル面談", "書類選考", "1次面接", "2次面接", "最終面接", "内定"];
 
-const STAGE_COLORS = {
-  "カジュアル面談": "bg-purple-100 text-purple-700",
-  "書類選考":       "bg-blue-100 text-blue-700",
-  "1次面接":        "bg-cyan-100 text-cyan-700",
-  "2次面接":        "bg-yellow-100 text-yellow-700",
-  "最終面接":       "bg-orange-100 text-orange-700",
-  "内定":           "bg-green-100 text-green-700",
+const STAGE_CONFIG = {
+  "カジュアル面談": { bg: "bg-gray-100",   text: "text-gray-600",   ring: "ring-gray-200",  dot: "bg-gray-400"   },
+  "書類選考":       { bg: "bg-sky-50",     text: "text-sky-600",   ring: "ring-sky-200",   dot: "bg-sky-400"    },
+  "1次面接":        { bg: "bg-blue-50",    text: "text-blue-700",  ring: "ring-blue-200",  dot: "bg-blue-500"   },
+  "2次面接":        { bg: "bg-indigo-50",  text: "text-indigo-700",ring: "ring-indigo-200",dot: "bg-indigo-500" },
+  "最終面接":       { bg: "bg-purple-50",  text: "text-purple-700",ring: "ring-purple-200",dot: "bg-purple-500" },
+  "内定":           { bg: "bg-emerald-50", text: "text-emerald-700",ring: "ring-emerald-200",dot: "bg-emerald-500"},
 };
 
-// ─── Header ───────────────────────────────────────────────────────────────────
-function Header({ title, onBack, onDelete }) {
-  return (
-    <header className="sticky top-0 z-10 bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-3">
-      {onBack && (
-        <button onClick={onBack} className="p-1.5 -ml-1 rounded-lg hover:bg-gray-100 transition-colors">
-          <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-        </button>
-      )}
-      <h1 className="flex-1 text-base font-semibold text-gray-900">{title}</h1>
-      {onDelete && (
-        <button onClick={onDelete} className="p-1.5 rounded-lg hover:bg-red-50 transition-colors">
-          <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
-      )}
-    </header>
-  );
-}
-
 // ─── Badge ────────────────────────────────────────────────────────────────────
-function StageBadge({ stage }) {
+function StageBadge({ stage, size = "sm" }) {
+  const cfg = STAGE_CONFIG[stage] || { bg: "bg-gray-100", text: "text-gray-600", dot: "bg-gray-400" };
+  const px = size === "lg" ? "px-3 py-1 text-sm" : "px-2.5 py-0.5 text-xs";
   return (
-    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STAGE_COLORS[stage] || "bg-gray-100 text-gray-600"}`}>
+    <span className={`inline-flex items-center gap-1.5 font-medium rounded-full ${px} ${cfg.bg} ${cfg.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`}></span>
       {stage}
     </span>
   );
@@ -145,101 +140,145 @@ function ListScreen({ logs, onAdd, onEdit }) {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <Header title="企業選考ログ" />
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-blue-600 shadow-md">
+        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center">
+              <svg className="w-4.5 h-4.5 text-white" style={{width:'18px',height:'18px'}} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <h1 className="text-white font-bold text-lg tracking-tight">企業選考ログ</h1>
+          </div>
+          <button
+            onClick={onAdd}
+            className="flex items-center gap-1.5 bg-white text-blue-600 font-semibold text-sm px-4 py-2 rounded-lg shadow-sm hover:bg-blue-50 active:scale-95 transition-all"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
+            </svg>
+            新規追加
+          </button>
+        </div>
+      </header>
 
-      <div className="px-4 pt-4 pb-2">
+      <div className="max-w-2xl mx-auto w-full px-4 pt-5 pb-2">
+        {/* Stats row */}
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          {[
+            { label: "応募中", count: logs.filter(l => !["内定"].includes(l.stage)).length, color: "text-blue-600", bg: "bg-blue-50" },
+            { label: "最終面接", count: logs.filter(l => l.stage === "最終面接").length, color: "text-purple-600", bg: "bg-purple-50" },
+            { label: "内定", count: logs.filter(l => l.stage === "内定").length, color: "text-emerald-600", bg: "bg-emerald-50" },
+          ].map(s => (
+            <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
+              <div className={`text-2xl font-bold ${s.color}`}>{s.count}</div>
+              <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Search */}
         <div className="relative">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
           <input
             type="text"
-            placeholder="企業名・フェーズで検索..."
+            placeholder="企業名・フェーズ・経路で検索..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-200"
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
           />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
+
+        {/* Count */}
+        <p className="mt-3 mb-3 text-xs text-gray-400 font-medium">
+          {filtered.length}件の記録
+        </p>
       </div>
 
-      <div className="flex-1 px-4 pb-28 space-y-3 pt-2">
+      {/* Card list */}
+      <div className="max-w-2xl mx-auto w-full px-4 pb-12 space-y-3">
         {filtered.length === 0 ? (
-          <div className="text-center py-16 text-gray-400 text-sm">
-            {search ? "該当する記録がありません" : "まだ記録がありません"}
+          <div className="text-center py-20">
+            <div className="w-14 h-14 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <svg className="w-7 h-7 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </div>
+            <p className="text-gray-400 text-sm">{search ? "該当する記録がありません" : "まだ記録がありません"}</p>
+            {!search && <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-medium hover:underline">最初の企業を追加する →</button>}
           </div>
         ) : (
           filtered.map((log) => (
             <button
               key={log.id}
               onClick={() => onEdit(log)}
-              className="fade-in w-full bg-white rounded-2xl border border-gray-100 p-4 text-left shadow-sm hover:shadow-md hover:border-gray-200 transition-all"
+              className="fade-in w-full bg-white rounded-xl border border-gray-100 p-4 text-left shadow-sm card-hover cursor-pointer"
             >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <h2 className="font-semibold text-gray-900 text-sm leading-tight">{log.company}</h2>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex-1 min-w-0">
+                  <h2 className="font-bold text-gray-900 text-base leading-tight truncate">{log.company}</h2>
+                </div>
                 <StageBadge stage={log.stage} />
               </div>
 
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+              <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-gray-500">
                 {log.interviewDate && (
-                  <span className="flex items-center gap-1">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <span className="flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
                     {log.interviewDate}
                   </span>
                 )}
-                <span className="flex items-center gap-1">
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <span className="flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                   </svg>
-                  {log.route}{log.agent ? ` (${log.agent})` : ""}
+                  {log.route}{log.agent ? ` · ${log.agent}` : ""}
                 </span>
+                {log.interviewer && (
+                  <span className="flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    {log.interviewer}
+                  </span>
+                )}
               </div>
 
               {log.memo && (
-                <p className="mt-2 text-xs text-gray-400 leading-relaxed line-clamp-2">{log.memo}</p>
+                <p className="mt-2.5 text-xs text-gray-400 leading-relaxed line-clamp-2 border-t border-gray-50 pt-2.5">{log.memo}</p>
               )}
             </button>
           ))
         )}
       </div>
-
-      <div className="fixed bottom-6 left-0 right-0 flex justify-center px-4 pointer-events-none">
-        <button
-          onClick={onAdd}
-          className="pointer-events-auto flex items-center gap-2 bg-gray-900 text-white px-6 py-3.5 rounded-full shadow-lg hover:bg-gray-700 active:scale-95 transition-all text-sm font-medium"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-          </svg>
-          新規追加
-        </button>
-      </div>
     </div>
   );
 }
 
-// ─── Form Screen (Add / Edit) ─────────────────────────────────────────────────
+// ─── Form Screen ──────────────────────────────────────────────────────────────
 const EMPTY_FORM = {
-  company: "",
-  route: "直接応募",
-  agent: "",
-  stage: "書類選考",
-  interviewDate: "",
-  interviewer: "",
-  memo: "",
+  company: "", route: "直接応募", agent: "",
+  stage: "書類選考", interviewDate: "", interviewer: "", memo: "",
 };
 
 function FormScreen({ initial, onBack, onSave, onDelete }) {
   const isEdit = !!initial;
   const [form, setForm] = useState(initial ? {
-    company: initial.company,
-    route: initial.route,
-    agent: initial.agent || "",
-    stage: initial.stage,
-    interviewDate: initial.interviewDate || "",
-    interviewer: initial.interviewer || "",
-    memo: initial.memo || "",
+    company: initial.company, route: initial.route, agent: initial.agent || "",
+    stage: initial.stage, interviewDate: initial.interviewDate || "",
+    interviewer: initial.interviewer || "", memo: initial.memo || "",
   } : EMPTY_FORM);
   const [errors, setErrors] = useState({});
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -261,175 +300,194 @@ function FormScreen({ initial, onBack, onSave, onDelete }) {
     onSave(form);
   };
 
-  const handleDelete = () => {
-    if (showDeleteConfirm) {
-      onDelete();
-    } else {
-      setShowDeleteConfirm(true);
-    }
-  };
-
   return (
     <div className="flex flex-col min-h-screen">
-      <Header
-        title={isEdit ? "選考を編集" : "新規追加"}
-        onBack={onBack}
-        onDelete={isEdit ? handleDelete : undefined}
-      />
-
-      {showDeleteConfirm && (
-        <div className="mx-4 mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center justify-between">
-          <span>本当に削除しますか？</span>
-          <div className="flex gap-2">
-            <button onClick={() => setShowDeleteConfirm(false)} className="text-gray-500 px-2 py-1 hover:underline">キャンセル</button>
-            <button onClick={onDelete} className="text-red-600 font-semibold px-2 py-1 hover:underline">削除する</button>
-          </div>
+      {/* Header */}
+      <header className="sticky top-0 z-10 bg-blue-600 shadow-md">
+        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
+          <button onClick={onBack} className="p-1.5 -ml-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h1 className="flex-1 text-white font-bold text-lg">{isEdit ? "選考を編集" : "新規追加"}</h1>
+          {isEdit && !showDeleteConfirm && (
+            <button onClick={() => setShowDeleteConfirm(true)} className="p-1.5 rounded-lg bg-white/10 hover:bg-red-400/30 transition-colors">
+              <svg className="w-5 h-5 text-white/80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          )}
         </div>
-      )}
+      </header>
 
-      <div className="flex-1 px-4 py-5 space-y-5 pb-32">
-        {/* Company */}
-        <Field label="企業名" required error={errors.company}>
-          <input
-            type="text"
-            value={form.company}
-            onChange={(e) => set("company", e.target.value)}
-            placeholder="例）株式会社〇〇"
-            className={inputCls(errors.company)}
-          />
-        </Field>
-
-        {/* Route */}
-        <Field label="応募経路">
-          <select value={form.route} onChange={(e) => set("route", e.target.value)} className={inputCls()}>
-            {ROUTES.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </Field>
-
-        {/* Agent */}
-        {form.route === "エージェント" && (
-          <Field label="エージェント名">
-            <input
-              type="text"
-              value={form.agent}
-              onChange={(e) => set("agent", e.target.value)}
-              placeholder="例）リクルートエージェント"
-              className={inputCls()}
-            />
-          </Field>
+      <div className="max-w-2xl mx-auto w-full px-4 py-5 space-y-4 pb-32">
+        {/* Delete confirm */}
+        {showDeleteConfirm && (
+          <div className="fade-in bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-red-700">この記録を削除しますか？</p>
+              <p className="text-xs text-red-500 mt-0.5">この操作は元に戻せません</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowDeleteConfirm(false)} className="text-xs text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">キャンセル</button>
+              <button onClick={onDelete} className="text-xs text-white bg-red-500 px-3 py-1.5 rounded-lg hover:bg-red-600 font-semibold transition-colors">削除する</button>
+            </div>
+          </div>
         )}
 
-        {/* Stage */}
-        <Field label="選考フェーズ">
-          <div className="grid grid-cols-3 gap-2">
-            {STAGES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => set("stage", s)}
-                className={`py-2 px-1 rounded-xl text-xs font-medium border transition-all ${
-                  form.stage === s
-                    ? "bg-gray-900 text-white border-gray-900"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+        {/* Form card */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50">
+
+          {/* Company */}
+          <div className="p-4">
+            <FormField label="企業名" required error={errors.company}>
+              <input
+                type="text"
+                value={form.company}
+                onChange={(e) => set("company", e.target.value)}
+                placeholder="例）株式会社〇〇"
+                className={inputCls(errors.company)}
+              />
+            </FormField>
           </div>
-        </Field>
 
-        {/* Interview Date */}
-        <Field label="面接日">
-          <input
-            type="date"
-            value={form.interviewDate}
-            onChange={(e) => set("interviewDate", e.target.value)}
-            className={inputCls()}
-          />
-        </Field>
+          {/* Route */}
+          <div className="p-4">
+            <FormField label="応募経路">
+              <select value={form.route} onChange={(e) => set("route", e.target.value)} className={inputCls()}>
+                {ROUTES.map((r) => <option key={r}>{r}</option>)}
+              </select>
+            </FormField>
+          </div>
 
-        {/* Interviewer */}
-        <Field label="面接官">
-          <input
-            type="text"
-            value={form.interviewer}
-            onChange={(e) => set("interviewer", e.target.value)}
-            placeholder="例）田中部長"
-            className={inputCls()}
-          />
-        </Field>
+          {/* Agent */}
+          {form.route === "エージェント" && (
+            <div className="p-4">
+              <FormField label="エージェント名">
+                <input
+                  type="text"
+                  value={form.agent}
+                  onChange={(e) => set("agent", e.target.value)}
+                  placeholder="例）リクルートエージェント"
+                  className={inputCls()}
+                />
+              </FormField>
+            </div>
+          )}
 
-        {/* Memo */}
-        <Field label="メモ">
-          <textarea
-            value={form.memo}
-            onChange={(e) => set("memo", e.target.value)}
-            placeholder="面接の感触、準備事項、気になった点など..."
-            rows={5}
-            className={inputCls() + " resize-none"}
-          />
-        </Field>
+          {/* Stage */}
+          <div className="p-4">
+            <FormField label="選考フェーズ">
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                {STAGES.map((s) => {
+                  const cfg = STAGE_CONFIG[s] || {};
+                  const selected = form.stage === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => set("stage", s)}
+                      className={`py-2 px-1 rounded-lg text-xs font-semibold border-2 transition-all ${
+                        selected
+                          ? `${cfg.bg} ${cfg.text} border-current shadow-sm`
+                          : "bg-white text-gray-500 border-gray-100 hover:border-gray-200"
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            </FormField>
+          </div>
+
+          {/* Interview Date */}
+          <div className="p-4">
+            <FormField label="面接日">
+              <input
+                type="date"
+                value={form.interviewDate}
+                onChange={(e) => set("interviewDate", e.target.value)}
+                className={inputCls()}
+              />
+            </FormField>
+          </div>
+
+          {/* Interviewer */}
+          <div className="p-4">
+            <FormField label="面接官">
+              <input
+                type="text"
+                value={form.interviewer}
+                onChange={(e) => set("interviewer", e.target.value)}
+                placeholder="例）田中部長"
+                className={inputCls()}
+              />
+            </FormField>
+          </div>
+
+          {/* Memo */}
+          <div className="p-4">
+            <FormField label="メモ">
+              <textarea
+                value={form.memo}
+                onChange={(e) => set("memo", e.target.value)}
+                placeholder="面接の感触、準備事項、気になった点など..."
+                rows={5}
+                className={inputCls() + " resize-none"}
+              />
+            </FormField>
+          </div>
+        </div>
       </div>
 
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-4 safe-bottom">
-        <button
-          onClick={handleSave}
-          className="w-full bg-gray-900 text-white py-3.5 rounded-xl font-medium text-sm hover:bg-gray-700 active:scale-[.98] transition-all"
-        >
-          {isEdit ? "変更を保存" : "追加する"}
-        </button>
+      {/* Save button */}
+      <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur border-t border-gray-100 px-4 py-4">
+        <div className="max-w-2xl mx-auto">
+          <button
+            onClick={handleSave}
+            className="w-full bg-blue-600 text-white py-3.5 rounded-xl font-semibold text-sm hover:bg-blue-700 active:scale-[.98] transition-all shadow-md shadow-blue-200"
+          >
+            {isEdit ? "変更を保存" : "追加する"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function Field({ label, required, error, children }) {
+function FormField({ label, required, error, children }) {
   return (
     <div>
-      <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wide">
+      <label className="block text-xs font-semibold text-gray-400 mb-1.5 uppercase tracking-wider">
         {label}{required && <span className="text-red-400 ml-1">*</span>}
       </label>
       {children}
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-red-500 flex items-center gap-1"><svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/></svg>{error}</p>}
     </div>
   );
 }
 
 function inputCls(error) {
-  return `w-full bg-white border ${error ? "border-red-300 focus:ring-red-200" : "border-gray-200 focus:ring-gray-200"} rounded-xl px-3.5 py-2.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 transition-colors`;
+  return `w-full bg-gray-50 border ${error ? "border-red-300 focus:ring-red-400" : "border-gray-200 focus:ring-blue-500"} rounded-lg px-3.5 py-2.5 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all`;
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 function App() {
   const { logs, addLog, updateLog, deleteLog } = useLogs();
-  const [screen, setScreen] = useState("list"); // "list" | "add" | "edit"
+  const [screen, setScreen] = useState("list");
   const [editing, setEditing] = useState(null);
 
   const goList = () => { setScreen("list"); setEditing(null); };
   const goAdd  = () => setScreen("add");
   const goEdit = (log) => { setEditing(log); setScreen("edit"); };
 
-  const handleAdd = (form) => {
-    addLog(form);
-    goList();
-  };
-
-  const handleUpdate = (form) => {
-    updateLog(editing.id, form);
-    goList();
-  };
-
-  const handleDelete = () => {
-    deleteLog(editing.id);
-    goList();
-  };
-
   if (screen === "add") {
-    return <FormScreen onBack={goList} onSave={handleAdd} />;
+    return <FormScreen onBack={goList} onSave={(f) => { addLog(f); goList(); }} />;
   }
   if (screen === "edit") {
-    return <FormScreen initial={editing} onBack={goList} onSave={handleUpdate} onDelete={handleDelete} />;
+    return <FormScreen initial={editing} onBack={goList} onSave={(f) => { updateLog(editing.id, f); goList(); }} onDelete={() => { deleteLog(editing.id); goList(); }} />;
   }
   return <ListScreen logs={logs} onAdd={goAdd} onEdit={goEdit} />;
 }
