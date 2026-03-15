@@ -171,7 +171,7 @@ function useLogs() {
   const deleteEvent = (logId, evId) =>
     setLogs(p => p.map(l => l.id!==logId ? l : { ...l, events:l.events.filter(e=>e.id!==evId) }));
 
-  return { logs, addLog, updateLog, deleteLog, addEvent, deleteEvent };
+  return { logs, setLogs, addLog, updateLog, deleteLog, addEvent, deleteEvent };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -193,6 +193,7 @@ const SVG_ICONS = {
   History:      <><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.5"/></>,
   XCircle:      <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>,
   Download:     <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
+  Upload:       <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>,
 };
 
 function Ic({ n, size=16, cls="" }) {
@@ -256,9 +257,34 @@ function exportLogs(logs) {
   URL.revokeObjectURL(url);
 }
 
-function ListScreen({ logs, onAdd, onDetail }) {
+function ListScreen({ logs, onAdd, onDetail, onImport }) {
   const [search,      setSearch]      = useState("");
   const [filterStage, setFilterStage] = useState("すべて");
+  const fileInputRef = React.useRef(null);
+
+  const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
+
+  const handleFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!Array.isArray(data)) { alert("JSONファイルの形式が正しくありません（配列が必要です）"); return; }
+        const replace = window.confirm(
+          `${data.length}件のデータを読み込みました。\n\n` +
+          "【OK】既存データをすべて置き換える\n" +
+          "【キャンセル】既存データに追加する"
+        );
+        onImport(data, replace);
+      } catch {
+        alert("JSONの解析に失敗しました。ファイルを確認してください。");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
 
   const filtered = logs.filter(l => {
     const q = search.toLowerCase();
@@ -285,6 +311,11 @@ function ListScreen({ logs, onAdd, onDetail }) {
             <h1 className="text-white font-bold text-lg tracking-tight">企業選考ログ</h1>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            <input ref={fileInputRef} type="file" accept=".json,application/json" style={{display:"none"}} onChange={handleFileChange}/>
+            <button onClick={handleImportClick} title="JSONインポート"
+              className="btn-blue flex items-center gap-1.5 bg-white/20 text-white font-bold text-sm px-3 py-2 rounded-lg hover:bg-white/30">
+              <Ic n="Upload" size={15}/> <span className="hidden sm:inline">インポート</span>
+            </button>
             <button onClick={()=>exportLogs(logs)} title="JSONエクスポート"
               className="btn-blue flex items-center gap-1.5 bg-white/20 text-white font-bold text-sm px-3 py-2 rounded-lg hover:bg-white/30">
               <Ic n="Download" size={15}/> <span className="hidden sm:inline">エクスポート</span>
@@ -778,7 +809,7 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
 // App（ルーティング）
 // ══════════════════════════════════════════════════════════════════
 function App() {
-  const { logs, addLog, updateLog, deleteLog, addEvent } = useLogs();
+  const { logs, setLogs, addLog, updateLog, deleteLog, addEvent } = useLogs();
   const [screen,   setScreen]   = useState("list"); // list | detail | add | edit
   const [selected, setSelected] = useState(null);
 
@@ -819,7 +850,19 @@ function App() {
       />
     );
   }
-  return <ListScreen logs={logs} onAdd={goAdd} onDetail={goDetail}/>;
+  const handleImport = (data, replace) => {
+    if (replace) {
+      setLogs(data);
+    } else {
+      setLogs(prev => {
+        const existingIds = new Set(prev.map(l => l.id));
+        const newItems = data.filter(l => !existingIds.has(l.id));
+        return [...prev, ...newItems];
+      });
+    }
+  };
+
+  return <ListScreen logs={logs} onAdd={goAdd} onDetail={goDetail} onImport={handleImport}/>;
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
