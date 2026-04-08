@@ -71,23 +71,55 @@ const { useState, useEffect, useRef } = React;
 // ══════════════════════════════════════════════════════════════════
 // 定数
 // ══════════════════════════════════════════════════════════════════
-const ROUTES  = ["エージェント","直接応募","LinkedIn","リファラル","その他"];
-const STAGES  = ["カジュアル面談","書類選考中","一次面接","二次面接","最終面接","内定","お見送り"];
-const EVENT_TYPES = ["応募","カジュアル面談","書類選考中","一次面接","二次面接","最終面接","内定","お見送り","その他メモ"];
+
+// ── ストレージキー ──────────────────────────────────────────────────
+// スキーマに破壊的変更を加えたときはバージョンを上げること（例: v4）
+const STORAGE_KEY = "job_logs_v3";
+
+// ── 応募経路 ─────────────────────────────────────────────────────────
+// 新しい経路を追加するときはここに文字列を1つ追加するだけ
+const ROUTES = ["エージェント","直接応募","LinkedIn","リファラル","その他"];
+
+// ── お見送り理由 ──────────────────────────────────────────────────────
+// 新しい理由を追加するときはここに文字列を1つ追加するだけ
 const DISMISSAL_REASONS = ["スキル不足","カルチャーフィット","ポジションクローズ","不明","その他"];
 
-const STAGE_CFG = {
-  "カジュアル面談": { bg:"bg-gray-100",    text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"   },
-  "書類選考中":     { bg:"bg-blue-50",     text:"text-blue-600",    dot:"bg-blue-400",    btn:"border-blue-400 bg-blue-50 text-blue-700"    },
-  "一次面接":       { bg:"bg-blue-100",    text:"text-blue-700",    dot:"bg-blue-500",    btn:"border-blue-500 bg-blue-100 text-blue-800"   },
-  "二次面接":       { bg:"bg-purple-50",   text:"text-purple-700",  dot:"bg-purple-500",  btn:"border-purple-400 bg-purple-50 text-purple-800" },
-  "最終面接":       { bg:"bg-orange-50",   text:"text-orange-700",  dot:"bg-orange-400",  btn:"border-orange-400 bg-orange-50 text-orange-800" },
-  "内定":           { bg:"bg-emerald-50",  text:"text-emerald-700", dot:"bg-emerald-500", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
-  "お見送り":       { bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"       },
-  "応募":           { bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700" },
-  "その他メモ":     { bg:"bg-slate-100",   text:"text-slate-500",   dot:"bg-slate-300",   btn:"border-slate-200 bg-slate-50 text-slate-500"  },
-};
-const cfgOf = (key) => STAGE_CFG[key] || STAGE_CFG["その他メモ"];
+// ── 選考フェーズ & タイムライン種別 ─────────────────────────────────
+// 【拡張方法】新しいフェーズ/イベント種別を追加するときは
+//   TYPE_DEFS にオブジェクトを1行追加するだけ。
+//   STAGES / EVENT_TYPES / TYPE_CFG は自動生成されるため触らない。
+//
+//   isStage: true  → 企業の「現在フェーズ」として選択可 & フィルター表示
+//   isStage: false → タイムライン記録専用（フェーズ扱いしない）
+const TYPE_DEFS = [
+  { key:"応募",           isStage:false, bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
+  { key:"カジュアル面談", isStage:true,  bg:"bg-gray-100",    text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"       },
+  { key:"書類選考中",     isStage:true,  bg:"bg-blue-50",     text:"text-blue-600",    dot:"bg-blue-400",    btn:"border-blue-400 bg-blue-50 text-blue-700"        },
+  { key:"一次面接",       isStage:true,  bg:"bg-blue-100",    text:"text-blue-700",    dot:"bg-blue-500",    btn:"border-blue-500 bg-blue-100 text-blue-800"       },
+  { key:"二次面接",       isStage:true,  bg:"bg-purple-50",   text:"text-purple-700",  dot:"bg-purple-500",  btn:"border-purple-400 bg-purple-50 text-purple-800"  },
+  { key:"最終面接",       isStage:true,  bg:"bg-orange-50",   text:"text-orange-700",  dot:"bg-orange-400",  btn:"border-orange-400 bg-orange-50 text-orange-800"  },
+  { key:"内定",           isStage:true,  bg:"bg-emerald-50",  text:"text-emerald-700", dot:"bg-emerald-500", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
+  { key:"お見送り",       isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"その他メモ",     isStage:false, bg:"bg-slate-100",   text:"text-slate-500",   dot:"bg-slate-300",   btn:"border-slate-200 bg-slate-50 text-slate-500"     },
+];
+// ▼ TYPE_DEFS から自動生成 — 直接編集しないこと ▼
+const EVENT_TYPES = TYPE_DEFS.map(t => t.key);
+const STAGES      = TYPE_DEFS.filter(t => t.isStage).map(t => t.key);
+const TYPE_CFG    = Object.fromEntries(TYPE_DEFS.map(t => [t.key, t]));
+const cfgOf       = (key) => TYPE_CFG[key] ?? TYPE_CFG["その他メモ"];
+
+// ── 優先度 ────────────────────────────────────────────────────────────
+// 【拡張方法】新しい優先度を追加するときは
+//   PRIORITY_DEFS にオブジェクトを1行追加するだけ。
+//   PRIORITIES / PRIORITY_CFG は自動生成されるため触らない。
+const PRIORITY_DEFS = [
+  { key:"高（第一志望）", bg:"bg-red-100",    text:"text-red-700",    dot:"bg-red-400"    },
+  { key:"中（様子見）",   bg:"bg-yellow-100", text:"text-yellow-700", dot:"bg-yellow-400" },
+  { key:"低（優先度低）", bg:"bg-gray-100",   text:"text-gray-500",   dot:"bg-gray-400"   },
+];
+// ▼ PRIORITY_DEFS から自動生成 — 直接編集しないこと ▼
+const PRIORITIES   = PRIORITY_DEFS.map(p => p.key);
+const PRIORITY_CFG = Object.fromEntries(PRIORITY_DEFS.map(p => [p.key, p]));
 
 // ══════════════════════════════════════════════════════════════════
 // モックデータ
@@ -96,7 +128,7 @@ const INIT = [
   {
     id:"1", company:"株式会社サンプル",
     route:"エージェント", agent:"リクルートエージェント", media:"",
-    stage:"一次面接", dismissalReason:"", dismissalNote:"",
+    stage:"一次面接", priority:"高（第一志望）", dismissalReason:"", dismissalNote:"",
     interviewDate:"2026-03-20", interviewer:"田中部長",
     memo:"技術面では問題なさそう。次回はシステム設計の話らしい。",
     events:[
@@ -109,7 +141,7 @@ const INIT = [
   {
     id:"2", company:"テック株式会社",
     route:"LinkedIn", agent:"", media:"",
-    stage:"カジュアル面談", dismissalReason:"", dismissalNote:"",
+    stage:"カジュアル面談", priority:"中（様子見）", dismissalReason:"", dismissalNote:"",
     interviewDate:"2026-03-18", interviewer:"佐藤CTO",
     memo:"スタートアップ。裁量が大きそう。",
     events:[
@@ -121,7 +153,7 @@ const INIT = [
   {
     id:"3", company:"グローバル商事",
     route:"直接応募", agent:"", media:"",
-    stage:"お見送り", dismissalReason:"ポジションクローズ",
+    stage:"お見送り", priority:"低（優先度低）", dismissalReason:"ポジションクローズ",
     dismissalNote:"惜しかった。また募集があれば応募したい。",
     interviewDate:"", interviewer:"",
     memo:"",
@@ -136,7 +168,7 @@ const INIT = [
   {
     id:"4", company:"フューチャーデザイン",
     route:"その他", agent:"", media:"Wantedly",
-    stage:"内定", dismissalReason:"", dismissalNote:"",
+    stage:"内定", priority:"高（第一志望）", dismissalReason:"", dismissalNote:"",
     interviewDate:"", interviewer:"人事部 山田",
     memo:"年収交渉中。",
     events:[
@@ -153,8 +185,27 @@ const INIT = [
 // ══════════════════════════════════════════════════════════════════
 // データ正規化ユーティリティ
 // ══════════════════════════════════════════════════════════════════
+// 【拡張方法】新フィールドを log スキーマに追加したときは
+//   LOG_DEFAULTS にデフォルト値を追加しておくこと。
+//   既存データの読み込み時に自動で補完される。
+const LOG_DEFAULTS = {
+  route:          "直接応募",
+  agent:          "",
+  media:          "",
+  stage:          "書類選考中",
+  priority:       "",
+  dismissalReason:"",
+  dismissalNote:  "",
+  interviewDate:  "",
+  interviewer:    "",
+  memo:           "",
+  events:         [],
+};
+
 const defaultDetails = () => ({ jobDescription:"", companyUrl:"", attachments:[] });
+
 const normalizeLog = (log) => ({
+  ...LOG_DEFAULTS,
   ...log,
   details: log.details
     ? { ...defaultDetails(), ...log.details, attachments: Array.isArray(log.details.attachments) ? log.details.attachments : [] }
@@ -167,13 +218,13 @@ const normalizeLog = (log) => ({
 function useLogs() {
   const [logs, setLogs] = useState(() => {
     try {
-      const s = localStorage.getItem("job_logs_v3");
+      const s = localStorage.getItem(STORAGE_KEY);
       const raw = s ? JSON.parse(s) : INIT;
       return raw.map(normalizeLog);
     }
     catch { return INIT.map(normalizeLog); }
   });
-  useEffect(() => { localStorage.setItem("job_logs_v3", JSON.stringify(logs)); }, [logs]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(logs)); }, [logs]);
 
   const addLog = (data) => {
     const id = Date.now().toString();
@@ -200,10 +251,19 @@ function useLogs() {
     }));
   };
 
+  const updateEvent = (logId, evId, data) => {
+    setLogs(p => p.map(l => {
+      if (l.id !== logId) return l;
+      const updated = (l.events||[]).map(e => e.id===evId ? {...e,...data} : e);
+      const sorted = [...updated].sort((a,b)=>a.date.localeCompare(b.date));
+      return { ...l, events: sorted };
+    }));
+  };
+
   const deleteEvent = (logId, evId) =>
     setLogs(p => p.map(l => l.id!==logId ? l : { ...l, events:l.events.filter(e=>e.id!==evId) }));
 
-  return { logs, setLogs, addLog, updateLog, deleteLog, addEvent, deleteEvent };
+  return { logs, setLogs, addLog, updateLog, deleteLog, addEvent, updateEvent, deleteEvent };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -348,6 +408,18 @@ function StageBadge({ stage }) {
   );
 }
 
+function PriorityBadge({ priority }) {
+  if (!priority) return null;
+  const c = PRIORITY_CFG[priority];
+  if (!c) return null;
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${c.bg} ${c.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
+      {priority}
+    </span>
+  );
+}
+
 function FormField({ label, required, error, hint, children }) {
   return (
     <div>
@@ -387,8 +459,9 @@ function exportLogs(logs) {
 }
 
 function ListScreen({ logs, onAdd, onDetail, onImport }) {
-  const [search,      setSearch]      = useState("");
-  const [filterStage, setFilterStage] = useState("すべて");
+  const [search,          setSearch]          = useState("");
+  const [filterStage,     setFilterStage]     = useState("すべて");
+  const [filterPriority,  setFilterPriority]  = useState("すべて");
   const fileInputRef = React.useRef(null);
 
   const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
@@ -419,7 +492,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
     const q = search.toLowerCase();
     const ms = !q || [l.company, l.stage, l.route, l.agent, l.media].some(v => v && v.toLowerCase().includes(q));
     const mf = filterStage==="すべて" || l.stage===filterStage;
-    return ms && mf;
+    const mp = filterPriority==="すべて" || l.priority===filterPriority;
+    return ms && mf && mp;
   });
 
   const stats = [
@@ -492,6 +566,23 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
               }`}>{s}</button>
           ))}
         </div>
+
+        {/* 優先度フィルター */}
+        <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
+          {["すべて",...PRIORITIES].map(p=>{
+            const cfg = PRIORITY_CFG[p];
+            const isSel = filterPriority===p;
+            return (
+              <button key={p} onClick={()=>setFilterPriority(p)}
+                className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
+                  isSel
+                    ? (cfg ? `${cfg.bg} ${cfg.text} border-transparent shadow-sm` : "bg-blue-600 text-white border-blue-600")
+                    : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
+                }`}>{p==="すべて" ? "優先度: すべて" : p}</button>
+            );
+          })}
+        </div>
+
         <p className="text-xs text-gray-400 font-medium mt-2 mb-3">{filtered.length}件</p>
       </div>
 
@@ -513,7 +604,10 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
             {/* 企業名 + バッジ */}
             <div className="flex items-start justify-between gap-3 mb-3">
               <h2 className="font-bold text-gray-900 text-base leading-snug flex-1 min-w-0 break-words">{log.company}</h2>
-              <StageBadge stage={log.stage}/>
+              <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                {log.priority && <PriorityBadge priority={log.priority}/>}
+                <StageBadge stage={log.stage}/>
+              </div>
             </div>
 
             {/* メタ情報 */}
@@ -740,9 +834,11 @@ function MemoTab({ log, onUpdate }) {
 // ══════════════════════════════════════════════════════════════════
 // タイムライン（企業詳細）画面
 // ══════════════════════════════════════════════════════════════════
-function DetailScreen({ log, onBack, onEdit, onAddEvent, onDelete, onUpdate }) {
-  const [showForm, setShowForm] = useState(false);
-  const [activeTab, setActiveTab] = useState("timeline"); // "timeline" | "jobdetails" | "memo"
+function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDeleteEvent, onDelete, onUpdate }) {
+  const [showForm,        setShowForm]        = useState(false);
+  const [activeTab,       setActiveTab]       = useState("timeline"); // "timeline" | "jobdetails" | "memo"
+  const [editingEventId,  setEditingEventId]  = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const events = [...(log.events||[])].sort((a,b)=>a.date.localeCompare(b.date));
 
   return (
@@ -773,12 +869,27 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onDelete, onUpdate }) {
         {/* 企業サマリーカード */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4">
           <div className="flex items-center justify-between mb-3 gap-3">
-            <StageBadge stage={log.stage}/>
+            <div className="flex items-center gap-2 flex-wrap">
+              <StageBadge stage={log.stage}/>
+              {log.priority && <PriorityBadge priority={log.priority}/>}
+            </div>
             {log.interviewDate && (
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 <Ic n="Calendar" size={13} cls="text-gray-400"/>次回: {log.interviewDate}
               </span>
             )}
+          </div>
+          <div className="mb-3">
+            <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">優先度</label>
+            <select
+              value={log.priority||""}
+              onChange={e => onUpdate(log.id, { priority: e.target.value })}
+              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3.5 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              style={{backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center",backgroundSize:"16px",paddingRight:"40px",WebkitAppearance:"none",appearance:"none"}}
+            >
+              <option value="">未設定</option>
+              {PRIORITIES.map(p=><option key={p} value={p}>{p}</option>)}
+            </select>
           </div>
           {log.interviewer && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600 mb-2">
@@ -859,28 +970,63 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onDelete, onUpdate }) {
                   {events.map((ev, idx) => {
                     const c = cfgOf(ev.type);
                     const isLast = idx === events.length - 1;
+                    const isEditing  = editingEventId  === ev.id;
+                    const isConfirm  = confirmDeleteId === ev.id;
                     return (
                       <div key={ev.id} className="relative flex gap-4 fade-in" style={{paddingBottom: isLast ? 0 : '1.5rem'}}>
                         <div className="relative z-10 flex-shrink-0">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow ${c.bg}`}>
-                            <span className={`w-3 h-3 rounded-full ${c.dot}`}/>
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 border-white shadow ${isEditing ? "bg-blue-100" : c.bg}`}>
+                            <span className={`w-3 h-3 rounded-full ${isEditing ? "bg-blue-400" : c.dot}`}/>
                           </div>
                         </div>
                         <div className="flex-1 min-w-0 pt-1 pb-1">
-                          <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                            <span className="text-xs font-bold text-gray-400">{ev.date}</span>
-                            <StageBadge stage={ev.type}/>
-                          </div>
-                          {ev.type==="お見送り" && ev.dismissalReason && (
-                            <p className="text-xs text-red-500 font-semibold mb-1">理由: {ev.dismissalReason}</p>
-                          )}
-                          {ev.memo && (
-                            <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-3">
-                              <div className="flex items-start gap-1.5">
-                                <Ic n="FileText" size={13} cls="text-gray-400 mt-0.5 flex-shrink-0"/>
-                                <p className="text-xs text-gray-600 leading-relaxed">{ev.memo}</p>
+                          {isEditing ? (
+                            <EditEventForm
+                              event={ev}
+                              onSave={data => { onUpdateEvent(log.id, ev.id, data); setEditingEventId(null); }}
+                              onCancel={() => setEditingEventId(null)}
+                            />
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                <span className="text-xs font-bold text-gray-400">{ev.date}</span>
+                                <StageBadge stage={ev.type}/>
+                                <div className="ml-auto flex items-center gap-0.5">
+                                  <button
+                                    onClick={() => { setEditingEventId(ev.id); setConfirmDeleteId(null); }}
+                                    className="p-1 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                                    title="編集">
+                                    <Ic n="Edit" size={13}/>
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteId(isConfirm ? null : ev.id)}
+                                    className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                                    title="削除">
+                                    <Ic n="Trash2" size={13}/>
+                                  </button>
+                                </div>
                               </div>
-                            </div>
+                              {isConfirm && (
+                                <div className="fade-in flex items-center gap-2 mb-2 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                                  <span className="text-xs text-red-600 font-semibold flex-1">この記録を削除しますか？</span>
+                                  <button onClick={() => setConfirmDeleteId(null)}
+                                    className="text-xs text-gray-500 px-2 py-1 rounded border border-gray-200 bg-white hover:bg-gray-50">キャンセル</button>
+                                  <button onClick={() => { onDeleteEvent(log.id, ev.id); setConfirmDeleteId(null); }}
+                                    className="text-xs text-white bg-red-500 px-2 py-1 rounded hover:bg-red-600 font-bold">削除</button>
+                                </div>
+                              )}
+                              {ev.type==="お見送り" && ev.dismissalReason && (
+                                <p className="text-xs text-red-500 font-semibold mb-1">理由: {ev.dismissalReason}</p>
+                              )}
+                              {ev.memo && (
+                                <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-3">
+                                  <div className="flex items-start gap-1.5">
+                                    <Ic n="FileText" size={13} cls="text-gray-400 mt-0.5 flex-shrink-0"/>
+                                    <p className="text-xs text-gray-600 leading-relaxed">{ev.memo}</p>
+                                  </div>
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                       </div>
@@ -968,12 +1114,69 @@ function EventForm({ onSave, onCancel }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// タイムライン項目 インライン編集フォーム
+// ══════════════════════════════════════════════════════════════════
+function EditEventForm({ event, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    date:            event.date,
+    type:            event.type,
+    memo:            event.memo            || "",
+    dismissalReason: event.dismissalReason || "",
+  });
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+  const isDismissal = form.type==="お見送り";
+
+  return (
+    <div className="slide-in bg-blue-50/60 rounded-xl border border-blue-100 shadow-sm p-4 space-y-3">
+      <p className="font-bold text-gray-700 text-xs flex items-center gap-1.5">
+        <Ic n="Edit" size={13} cls="text-blue-500"/>記録を編集
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <FormField label="日付">
+          <input type="date" value={form.date} onChange={e=>set("date",e.target.value)} className={inCls()}/>
+        </FormField>
+        <FormField label="種別">
+          <select value={form.type} onChange={e=>set("type",e.target.value)} className={inCls()}>
+            {EVENT_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+          </select>
+        </FormField>
+      </div>
+      {isDismissal && (
+        <div className="fade-in">
+          <FormField label="お見送り理由">
+            <select value={form.dismissalReason} onChange={e=>set("dismissalReason",e.target.value)} className={inCls()}>
+              <option value="">選択してください</option>
+              {DISMISSAL_REASONS.map(r=><option key={r} value={r}>{r}</option>)}
+            </select>
+          </FormField>
+        </div>
+      )}
+      <FormField label="メモ">
+        <textarea value={form.memo} onChange={e=>set("memo",e.target.value)}
+          placeholder="面接の感触、気になった点など..."
+          rows={3} className={inCls()+" resize-none"}/>
+      </FormField>
+      <div className="flex gap-2">
+        <button onClick={onCancel}
+          className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 font-semibold hover:bg-gray-50 transition-colors">
+          キャンセル
+        </button>
+        <button onClick={()=>{ if(form.date&&form.type) onSave(form); }}
+          className="btn-blue flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold shadow-sm">
+          保存する
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 企業フォーム画面（新規追加 / 編集）
 // ══════════════════════════════════════════════════════════════════
+// LOG_DEFAULTS から生成することで、新フィールド追加時に EMPTY_FORM への手動追加を不要にする
 const EMPTY_FORM = {
-  company:"", route:"直接応募", agent:"", media:"",
-  stage:"書類選考中", dismissalReason:"", dismissalNote:"",
-  interviewDate:"", interviewer:"", memo:"",
+  company:"",
+  ...LOG_DEFAULTS,
   applicationDate: new Date().toISOString().split("T")[0],
   applicationMemo:"",
 };
@@ -981,16 +1184,11 @@ const EMPTY_FORM = {
 function CompanyForm({ initial, onBack, onSave, onDelete }) {
   const isEdit = !!initial;
   const [form, setForm] = useState(() => initial ? {
-    company:        initial.company||"",
-    route:          initial.route||"直接応募",
-    agent:          initial.agent||"",
-    media:          initial.media||"",
-    stage:          initial.stage||"書類選考中",
-    dismissalReason:initial.dismissalReason||"",
-    dismissalNote:  initial.dismissalNote||"",
-    interviewDate:  initial.interviewDate||"",
-    interviewer:    initial.interviewer||"",
-    memo:           initial.memo||"",
+    // LOG_DEFAULTS でフォールバックを確保しつつ既存値を上書き。
+    // 新フィールドを LOG_DEFAULTS に追加すれば編集フォームにも自動反映。
+    company: initial.company || "",
+    ...LOG_DEFAULTS,
+    ...Object.fromEntries(Object.keys(LOG_DEFAULTS).map(k => [k, initial[k] ?? LOG_DEFAULTS[k]])),
     applicationDate:"", applicationMemo:"",
   } : {...EMPTY_FORM});
   const [errors, setErrors] = useState({});
@@ -1102,6 +1300,26 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
             </FormField>
           </div>
 
+          {/* 優先度 */}
+          <div className="p-4">
+            <FormField label="優先度">
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                {PRIORITIES.map(p=>{
+                  const cfg = PRIORITY_CFG[p];
+                  const sel = form.priority===p;
+                  return (
+                    <button key={p} type="button" onClick={()=>set("priority", sel ? "" : p)}
+                      className={`py-2 px-1 rounded-lg text-xs font-bold border-2 transition-all leading-tight ${
+                        sel ? `${cfg.bg} ${cfg.text} border-transparent shadow-sm` : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"
+                      }`}>
+                      {p}
+                    </button>
+                  );
+                })}
+              </div>
+            </FormField>
+          </div>
+
           {/* お見送り理由（お見送り選択時のみ） */}
           {showDismissal && (
             <div className="p-4 space-y-3 fade-in bg-red-50/40">
@@ -1171,7 +1389,7 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
 // App（ルーティング）
 // ══════════════════════════════════════════════════════════════════
 function App() {
-  const { logs, setLogs, addLog, updateLog, deleteLog, addEvent } = useLogs();
+  const { logs, setLogs, addLog, updateLog, deleteLog, addEvent, updateEvent, deleteEvent } = useLogs();
   const { notifications, dismiss, dismissAll } = useInterviewNotifications(logs);
   const [screen,   setScreen]   = useState("list"); // list | detail | add | edit
   const [selected, setSelected] = useState(null);
@@ -1220,6 +1438,8 @@ function App() {
           onBack={goList}
           onEdit={goEdit}
           onAddEvent={addEvent}
+          onUpdateEvent={updateEvent}
+          onDeleteEvent={deleteEvent}
           onUpdate={updateLog}
           onDelete={() => { deleteLog(selectedLog.id); goList(); }}
         />
