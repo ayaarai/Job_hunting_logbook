@@ -893,12 +893,99 @@ function MemoTab({ log, onUpdate }) {
 // ══════════════════════════════════════════════════════════════════
 // 企業理解タブ
 // ══════════════════════════════════════════════════════════════════
+// Markdownの見出しとセクションキーのマッピング
+const MD_HEADING_MAP = [
+  { patterns: ["事業"],                          key: "事業"         },
+  { patterns: ["課題", "特徴"],                   key: "課題特徴"     },
+  { patterns: ["技術", "取り組み", "仕組み"],      key: "技術取り組み" },
+  { patterns: ["組織", "カルチャー", "文化"],      key: "カルチャー"   },
+  { patterns: ["自分との接点", "接点"],            key: "自分との接点" },
+  { patterns: ["やりたいこと", "志望動機"],        key: "やりたいこと" },
+];
+
+function parseMarkdownToUnderstanding(mdText) {
+  // 現在のデフォルト構造をベースにする
+  const result = defaultUnderstanding();
+
+  // ファイルを見出しごとに分割（## レベル）
+  const lines = mdText.split("\n");
+  let currentKey = null;
+  let currentLines = [];
+
+  const flushSection = () => {
+    if (!currentKey || currentLines.length === 0) return;
+    const content = currentLines.join("\n").trim();
+    if (!content) return;
+
+    // blockquote（"> "）を概要に（最初の1行）
+    const summaryMatch = content.match(/^>\s*(.+)/m);
+    const summary = summaryMatch ? summaryMatch[1].trim() : "";
+
+    // "- "で始まる行をポイントに（tags行は除く）
+    const points = currentLines
+      .filter(l => /^- /.test(l) && !/^tags:/.test(l))
+      .map(l => l.replace(/^- /, "").trim())
+      .filter(Boolean);
+
+    // "tags:" 行からタグを抽出
+    const tagsLine = currentLines.find(l => /^tags:/.test(l));
+    const tags = tagsLine
+      ? tagsLine.replace(/^tags:\s*/, "").split(/[\s,]+/).filter(t => t.startsWith("#"))
+      : [];
+
+    result[currentKey] = {
+      summary,
+      points: points.length > 0 ? points : [""],
+      tags,
+      highlights: [],
+    };
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const h2match = line.match(/^##\s+(.+)/);
+    if (h2match) {
+      flushSection();
+      const heading = h2match[1].trim();
+      // マッピングを探す（部分一致）
+      const found = MD_HEADING_MAP.find(m =>
+        m.patterns.some(p => heading.includes(p))
+      );
+      currentKey = found ? found.key : null;
+      currentLines = [];
+    } else if (currentKey) {
+      currentLines.push(line);
+    }
+  }
+  flushSection();
+
+  return result;
+}
+
 function CompanyUnderstandingTab({ log, onUpdate }) {
   const [data, setData] = useState(() => log.companyUnderstanding || defaultUnderstanding());
   const [collapsed, setCollapsed] = useState({});
   const [quickView, setQuickView] = useState(false);
   const [showMotivation, setShowMotivation] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [mdImported, setMdImported] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleMdImport = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target.result;
+      const parsed = parseMarkdownToUnderstanding(text);
+      setData(parsed);
+      setMdImported(true);
+      setTimeout(() => setMdImported(false), 3000);
+    };
+    reader.readAsText(file);
+    // 同じファイルを再選択できるようにリセット
+    e.target.value = "";
+  };
 
   const updateSection = (key, field, value) =>
     setData(d => ({ ...d, [key]: { ...d[key], [field]: value } }));
@@ -999,6 +1086,17 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
             className="flex items-center gap-1.5 text-xs bg-purple-50 text-purple-700 border border-purple-200 font-semibold px-3 py-1.5 rounded-lg hover:bg-purple-100 transition-colors">
             <Ic n="Star" size={12}/>志望動機に変換
           </button>
+          <button onClick={() => fileInputRef.current && fileInputRef.current.click()}
+            className={`flex items-center gap-1.5 text-xs border font-semibold px-3 py-1.5 rounded-lg transition-colors ${mdImported ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"}`}>
+            <Ic n="Upload" size={12}/>{mdImported ? "取り込み完了 ✓" : "MDを取り込む"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".md,text/markdown,text/plain"
+            className="hidden"
+            onChange={handleMdImport}
+          />
         </div>
         <button onClick={handleSave}
           className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${saved ? "bg-emerald-500 text-white" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
