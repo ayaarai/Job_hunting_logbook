@@ -324,6 +324,17 @@ function useLogs() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 次回予定日ヘルパー（タイムラインから自動算出）
+// ══════════════════════════════════════════════════════════════════
+function getNextDate(log) {
+  const today = new Date().toISOString().split("T")[0];
+  const future = (log.events || [])
+    .filter(e => e.date && e.date >= today)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return future.length > 0 ? future[0].date : "";
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 面接通知フック
 // ══════════════════════════════════════════════════════════════════
 const NOTIF_KEY = "interview_notif_seen";
@@ -346,11 +357,13 @@ function useInterviewNotifications(logs) {
   const [seenIds, setSeenIds] = useState(() => getSeenIds());
 
   const notifications = logs
-    .filter(l => l.interviewDate && l.stage !== "お見送り" && l.stage !== "内定")
+    .filter(l => l.stage !== "お見送り" && l.stage !== "内定")
     .flatMap(l => {
+      const nextDate = getNextDate(l);
+      if (!nextDate) return [];
       const items = [];
-      if (l.interviewDate === todayStr)    items.push({ id:`${l.id}_today`,    company:l.company, date:l.interviewDate, type:"today" });
-      if (l.interviewDate === tomorrowStr) items.push({ id:`${l.id}_tomorrow`, company:l.company, date:l.interviewDate, type:"tomorrow" });
+      if (nextDate === todayStr)    items.push({ id:`${l.id}_today`,    company:l.company, date:nextDate, type:"today" });
+      if (nextDate === tomorrowStr) items.push({ id:`${l.id}_tomorrow`, company:l.company, date:nextDate, type:"tomorrow" });
       return items;
     })
     .filter(n => !seenIds.has(n.id));
@@ -440,6 +453,7 @@ const SVG_ICONS = {
   ExternalLink: <><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>,
   Bell:         <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,
   ChevronDown:  <polyline points="6 9 12 15 18 9"/>,
+  ChevronRight: <polyline points="9 18 15 12 9 6"/>,
   BookOpen:     <><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></>,
   Star:         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>,
   Zap:          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>,
@@ -501,6 +515,90 @@ function routeLabel(log) {
   if (log.route==="エージェント" && log.agent) return `${log.route} · ${log.agent}`;
   if (log.route==="その他"       && log.media) return `その他 (${log.media})`;
   return log.route;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 今後の活動予定パネル
+// ══════════════════════════════════════════════════════════════════
+function UpcomingPanel({ logs, onDetail }) {
+  const [showAll, setShowAll] = React.useState(false);
+  const today = new Date().toISOString().split("T")[0];
+  const weekEnd = (() => {
+    const d = new Date(); d.setDate(d.getDate() + 6);
+    return d.toISOString().split("T")[0];
+  })();
+
+  const allItems = logs
+    .filter(l => l.stage !== "お見送り")
+    .flatMap(l =>
+      (l.events || [])
+        .filter(e => e.date && e.date >= today)
+        .map(e => ({ date: e.date, type: e.type, memo: e.memo || "", company: l.company, log: l, uid: `${l.id}_${e.id}` }))
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const LIMIT = 5;
+  const visible = showAll ? allItems.slice(0, 10) : allItems.slice(0, LIMIT);
+  const hasMore = !showAll && allItems.length > LIMIT;
+
+  const sectionOf = d => d === today ? "今日" : d <= weekEnd ? "今週" : "それ以降";
+  const grouped = visible.reduce((acc, item) => {
+    const s = sectionOf(item.date);
+    (acc[s] = acc[s] || []).push(item);
+    return acc;
+  }, {});
+
+  const SECTION_STYLE = {
+    "今日":     "bg-red-50 text-red-600 border-b border-red-100",
+    "今週":     "bg-blue-50 text-blue-600 border-b border-blue-100",
+    "それ以降": "bg-gray-50 text-gray-500 border-b border-gray-100",
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+        <Ic n="Calendar" size={15} cls="text-blue-500"/>
+        <span className="font-bold text-sm text-gray-800">今後の活動予定</span>
+        {allItems.length > 0 && (
+          <span className="ml-auto text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{allItems.length}件</span>
+        )}
+      </div>
+      {allItems.length === 0 ? (
+        <div className="px-4 py-10 text-center">
+          <Ic n="Calendar" size={30} cls="text-gray-200 mx-auto mb-2"/>
+          <p className="text-xs text-gray-400">予定はありません</p>
+        </div>
+      ) : (
+        <>
+          {["今日","今週","それ以降"].filter(s => grouped[s]).map(section => (
+            <div key={section}>
+              <div className={`px-4 py-1.5 text-xs font-bold tracking-wide ${SECTION_STYLE[section]}`}>{section}</div>
+              {grouped[section].map(item => (
+                <button key={item.uid} onClick={() => onDetail(item.log)}
+                  className="w-full px-4 py-2.5 text-left hover:bg-gray-50 active:bg-gray-100 transition-colors flex items-center gap-3 border-b border-gray-50 last:border-0">
+                  <span className="flex-shrink-0 w-10 text-center text-xs font-mono font-semibold text-gray-500">
+                    {item.date.slice(5).replace("-","/")}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-xs font-bold text-gray-800 truncate">{item.company}</span>
+                    <span className="block text-xs text-blue-600">{item.type}</span>
+                    {item.memo && <span className="block text-xs text-gray-400 truncate">{item.memo}</span>}
+                  </span>
+                  <Ic n="ChevronRight" size={13} cls="text-gray-300 flex-shrink-0"/>
+                </button>
+              ))}
+            </div>
+          ))}
+          {hasMore && (
+            <button onClick={() => setShowAll(true)}
+              className="w-full py-2.5 text-center text-xs font-semibold text-blue-600 hover:bg-blue-50 transition-colors border-t border-gray-50">
+              もっと見る（残り{allItems.length - LIMIT}件）
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -591,111 +689,123 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
         </div>
       </header>
 
-      <div className="max-w-2xl mx-auto w-full px-4 pt-5">
-        {/* 統計カード */}
-        <div className="grid grid-cols-3 gap-3 mb-4">
-          {stats.map(s=>(
-            <div key={s.label} className={`border rounded-xl p-3 text-center ${s.bg}`}>
-              <div className={`text-2xl font-bold ${s.color}`}>{s.count}</div>
-              <div className="text-xs text-gray-500 font-medium mt-0.5">{s.label}</div>
+      {/* メインレイアウト */}
+      <div className="flex-1 max-w-5xl mx-auto w-full px-4 pt-5 pb-12">
+        <div className="flex flex-col lg:flex-row lg:items-start gap-5">
+
+          {/* サイドパネル */}
+          <aside className="w-full lg:w-72 lg:flex-shrink-0">
+            <UpcomingPanel logs={logs} onDetail={onDetail}/>
+          </aside>
+
+          {/* メインコンテンツ */}
+          <div className="flex-1 min-w-0">
+            {/* 統計カード */}
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {stats.map(s=>(
+                <div key={s.label} className={`border rounded-xl p-3 text-center ${s.bg}`}>
+                  <div className={`text-2xl font-bold ${s.color}`}>{s.count}</div>
+                  <div className="text-xs text-gray-500 font-medium mt-0.5">{s.label}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
 
-        {/* 検索 */}
-        <div className="relative mb-3">
-          <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-            <Ic n="Search" size={16}/>
-          </span>
-          <input type="text" placeholder="企業名・フェーズ・経路で検索..."
-            value={search} onChange={e=>setSearch(e.target.value)}
-            className="w-full pl-10 pr-10 py-2.5 bg-white border border-gray-200 rounded-xl text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"/>
-          {search && (
-            <button onClick={()=>setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-              <Ic n="X" size={16}/>
-            </button>
-          )}
-        </div>
-
-        {/* フェーズフィルター */}
-        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-          {["すべて",...STAGES].map(s=>(
-            <button key={s} onClick={()=>setFilterStage(s)}
-              className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
-                filterStage===s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
-              }`}>{s}</button>
-          ))}
-        </div>
-
-        {/* 優先度フィルター */}
-        <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
-          {["すべて",...PRIORITIES].map(p=>{
-            const cfg = PRIORITY_CFG[p];
-            const isSel = filterPriority===p;
-            return (
-              <button key={p} onClick={()=>setFilterPriority(p)}
-                className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
-                  isSel
-                    ? (cfg ? `${cfg.bg} ${cfg.text} border-transparent shadow-sm` : "bg-blue-600 text-white border-blue-600")
-                    : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
-                }`}>{p==="すべて" ? "優先度: すべて" : p}</button>
-            );
-          })}
-        </div>
-
-        <p className="text-xs text-gray-400 font-medium mt-2 mb-3">{filtered.length}件</p>
-      </div>
-
-      {/* カードリスト */}
-      <div className="max-w-2xl mx-auto w-full px-4 pb-12 space-y-3">
-        {filtered.length===0 ? (
-          <div className="text-center py-20">
-            <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <Ic n="Building" size={30} cls="text-gray-300"/>
+            {/* 検索 */}
+            <div className="relative mb-3">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                <Ic n="Search" size={16}/>
+              </span>
+              <input type="text" placeholder="企業名・フェーズ・経路で検索..."
+                value={search} onChange={e=>setSearch(e.target.value)}
+                className="w-full pl-10 pr-10 py-2.5 bg-white border border-gray-200 rounded-xl text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"/>
+              {search && (
+                <button onClick={()=>setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                  <Ic n="X" size={16}/>
+                </button>
+              )}
             </div>
-            <p className="text-gray-400 text-sm">{search||filterStage!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
-            {!search && filterStage==="すべて" && (
-              <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">最初の企業を追加する →</button>
-            )}
+
+            {/* フェーズフィルター */}
+            <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+              {["すべて",...STAGES].map(s=>(
+                <button key={s} onClick={()=>setFilterStage(s)}
+                  className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
+                    filterStage===s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
+                  }`}>{s}</button>
+              ))}
+            </div>
+
+            {/* 優先度フィルター */}
+            <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
+              {["すべて",...PRIORITIES].map(p=>{
+                const cfg = PRIORITY_CFG[p];
+                const isSel = filterPriority===p;
+                return (
+                  <button key={p} onClick={()=>setFilterPriority(p)}
+                    className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
+                      isSel
+                        ? (cfg ? `${cfg.bg} ${cfg.text} border-transparent shadow-sm` : "bg-blue-600 text-white border-blue-600")
+                        : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
+                    }`}>{p==="すべて" ? "優先度: すべて" : p}</button>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-gray-400 font-medium mt-2 mb-3">{filtered.length}件</p>
+
+            {/* カードリスト */}
+            <div className="space-y-3">
+              {filtered.length===0 ? (
+                <div className="text-center py-20">
+                  <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <Ic n="Building" size={30} cls="text-gray-300"/>
+                  </div>
+                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
+                  {!search && filterStage==="すべて" && (
+                    <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">最初の企業を追加する →</button>
+                  )}
+                </div>
+              ) : filtered.map(log=>(
+                <button key={log.id} onClick={()=>onDetail(log)}
+                  className="fade-in log-card w-full bg-white rounded-xl border border-gray-100 p-4 text-left shadow-sm cursor-pointer">
+                  {/* 企業名 + バッジ */}
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <h2 className="font-bold text-gray-900 text-base leading-snug flex-1 min-w-0 break-words">{log.company}</h2>
+                    <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+                      {log.priority && <PriorityBadge priority={log.priority}/>}
+                      <StageBadge stage={log.stage}/>
+                    </div>
+                  </div>
+
+                  {/* メタ情報 */}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-gray-500">
+                    {getNextDate(log) && (
+                      <span className="flex items-center gap-1.5"><Ic n="Calendar" size={13} cls="text-gray-400"/>{getNextDate(log)}</span>
+                    )}
+                    <span className="flex items-center gap-1.5"><Ic n="Link" size={13} cls="text-gray-400"/>{routeLabel(log)}</span>
+                    {log.interviewer && (
+                      <span className="flex items-center gap-1.5"><Ic n="User" size={13} cls="text-gray-400"/>{log.interviewer}</span>
+                    )}
+                    {(log.events||[]).length>0 && (
+                      <span className="flex items-center gap-1.5"><Ic n="History" size={13} cls="text-gray-400"/>{log.events.length}件の記録</span>
+                    )}
+                  </div>
+
+                  {/* お見送り理由 */}
+                  {log.stage==="お見送り" && log.dismissalReason && (
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
+                      <Ic n="XCircle" size={12}/>お見送り理由: {log.dismissalReason}
+                    </div>
+                  )}
+
+                  {/* メモプレビュー */}
+                  <RichMemo html={log.memo} preview
+                    className="mt-2.5 text-xs text-gray-400 leading-relaxed line-clamp-2 border-t border-gray-50 pt-2.5" />
+                </button>
+              ))}
+            </div>
           </div>
-        ) : filtered.map(log=>(
-          <button key={log.id} onClick={()=>onDetail(log)}
-            className="fade-in log-card w-full bg-white rounded-xl border border-gray-100 p-4 text-left shadow-sm cursor-pointer">
-            {/* 企業名 + バッジ */}
-            <div className="flex items-start justify-between gap-3 mb-3">
-              <h2 className="font-bold text-gray-900 text-base leading-snug flex-1 min-w-0 break-words">{log.company}</h2>
-              <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
-                {log.priority && <PriorityBadge priority={log.priority}/>}
-                <StageBadge stage={log.stage}/>
-              </div>
-            </div>
-
-            {/* メタ情報 */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-gray-500">
-              {log.interviewDate && (
-                <span className="flex items-center gap-1.5"><Ic n="Calendar" size={13} cls="text-gray-400"/>{log.interviewDate}</span>
-              )}
-              <span className="flex items-center gap-1.5"><Ic n="Link" size={13} cls="text-gray-400"/>{routeLabel(log)}</span>
-              {log.interviewer && (
-                <span className="flex items-center gap-1.5"><Ic n="User" size={13} cls="text-gray-400"/>{log.interviewer}</span>
-              )}
-              {(log.events||[]).length>0 && (
-                <span className="flex items-center gap-1.5"><Ic n="History" size={13} cls="text-gray-400"/>{log.events.length}件の記録</span>
-              )}
-            </div>
-
-            {/* お見送り理由 */}
-            {log.stage==="お見送り" && log.dismissalReason && (
-              <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
-                <Ic n="XCircle" size={12}/>お見送り理由: {log.dismissalReason}
-              </div>
-            )}
-
-            {/* メモプレビュー */}
-            <RichMemo html={log.memo} preview
-              className="mt-2.5 text-xs text-gray-400 leading-relaxed line-clamp-2 border-t border-gray-50 pt-2.5" />
-          </button>
-        ))}
+        </div>
       </div>
     </div>
   );
@@ -1269,9 +1379,9 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
               <StageBadge stage={log.stage}/>
               {log.priority && <PriorityBadge priority={log.priority}/>}
             </div>
-            {log.interviewDate && (
+            {getNextDate(log) && (
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
-                <Ic n="Calendar" size={13} cls="text-gray-400"/>次回: {log.interviewDate}
+                <Ic n="Calendar" size={13} cls="text-gray-400"/>次回: {getNextDate(log)}
               </span>
             )}
           </div>
