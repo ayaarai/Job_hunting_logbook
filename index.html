@@ -602,6 +602,97 @@ function UpcomingPanel({ logs, onDetail }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// 活動目標パネル
+// ══════════════════════════════════════════════════════════════════
+const GOALS_KEY = "activity_goals_v1";
+
+function GoalsPanel() {
+  const [goals, setGoals] = React.useState(() => {
+    try {
+      const s = localStorage.getItem(GOALS_KEY);
+      return s ? JSON.parse(s) : { thisWeek: "", nextWeek: "" };
+    } catch { return { thisWeek: "", nextWeek: "" }; }
+  });
+  const [tab,     setTab]     = React.useState("thisWeek");
+  const [editing, setEditing] = React.useState(false);
+  const [draft,   setDraft]   = React.useState("");
+
+  const TAB_LABELS = { thisWeek: "今週", nextWeek: "来週" };
+
+  const startEdit = () => { setDraft(goals[tab]); setEditing(true); };
+  const cancel    = () => { setEditing(false); };
+  const save      = () => {
+    const next = { ...goals, [tab]: draft };
+    setGoals(next);
+    localStorage.setItem(GOALS_KEY, JSON.stringify(next));
+    setEditing(false);
+  };
+  const switchTab = (key) => { setTab(key); setEditing(false); };
+
+  const autoResize = (el) => { if (!el) return; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
+
+  const current = goals[tab];
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mt-4">
+      {/* ヘッダー */}
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+        <Ic n="Star" size={15} cls="text-amber-500"/>
+        <span className="font-bold text-sm text-gray-800">活動目標</span>
+        {!editing && (
+          <button onClick={startEdit} className="ml-auto p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors" title="編集">
+            <Ic n="Edit" size={14}/>
+          </button>
+        )}
+      </div>
+
+      {/* 今週 / 来週 タブ */}
+      <div className="flex border-b border-gray-100">
+        {Object.entries(TAB_LABELS).map(([key, label]) => (
+          <button key={key} onClick={() => switchTab(key)}
+            className={`flex-1 py-2 text-xs font-semibold transition-colors ${
+              tab === key
+                ? "text-blue-600 border-b-2 border-blue-600 bg-blue-50/40"
+                : "text-gray-400 hover:text-gray-600"
+            }`}>{label}</button>
+        ))}
+      </div>
+
+      {/* コンテンツ */}
+      <div className="px-4 py-3">
+        {editing ? (
+          <>
+            <textarea
+              value={draft}
+              onChange={e => { setDraft(e.target.value); autoResize(e.target); }}
+              onFocus={e => autoResize(e.target)}
+              autoFocus
+              placeholder={`${TAB_LABELS[tab]}の目標を入力...\n例：\n・第一志望の企業研究を深める\n・面接対策を1日1社分やる`}
+              className="w-full text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none leading-relaxed"
+              style={{minHeight:"100px"}}
+            />
+            <div className="flex gap-2 mt-2 justify-end">
+              <button onClick={cancel}
+                className="text-xs text-gray-500 px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors">キャンセル</button>
+              <button onClick={save}
+                className="text-xs font-semibold text-white bg-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-700 transition-colors">保存</button>
+            </div>
+          </>
+        ) : current ? (
+          <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{current}</p>
+        ) : (
+          <div className="py-6 text-center">
+            <p className="text-xs text-gray-400">{TAB_LABELS[tab]}の目標を設定しましょう</p>
+            <button onClick={startEdit}
+              className="mt-2 text-xs font-semibold text-blue-600 hover:underline">+ 目標を追加する</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
 // 一覧画面
 // ══════════════════════════════════════════════════════════════════
 function exportLogs(logs) {
@@ -696,6 +787,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
           {/* サイドパネル */}
           <aside className="w-full lg:w-72 lg:flex-shrink-0">
             <UpcomingPanel logs={logs} onDetail={onDetail}/>
+            <GoalsPanel/>
           </aside>
 
           {/* メインコンテンツ */}
