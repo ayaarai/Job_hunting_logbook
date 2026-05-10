@@ -91,6 +91,133 @@ const _stripHtml = (html) => {
   return tmp.textContent || tmp.innerText || "";
 };
 
+const todayStamp = () => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadTextFile(text, filename, type) {
+  downloadBlob(new Blob([text], { type }), filename);
+}
+
+function csvCell(value) {
+  const text = String(value ?? "").replace(/\r?\n/g, " ");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function buildSelectionProgress(logs) {
+  return logs.map(log => ({
+    id: log.id,
+    company: log.company,
+    route: log.route,
+    agent: log.agent,
+    media: log.media,
+    status: log.stage,
+    priority: log.priority,
+    interviewDate: log.interviewDate,
+    nextInterviewDate: getNextDate(log),
+    interviewer: log.interviewer,
+    memo: _stripHtml(log.memo),
+    dismissalReason: log.dismissalReason,
+    dismissalNote: log.dismissalNote,
+    companyUrl: log.details?.companyUrl || "",
+    jobDescription: log.details?.jobDescription || "",
+    attachmentUrls: log.details?.attachments || [],
+    materialFiles: (log.details?.files || []).map(f => ({
+      id: f.id,
+      name: f.name,
+      type: f.type,
+      size: f.size,
+      uploadedAt: f.uploadedAt,
+      label: f.label || "",
+    })),
+    timeline: (log.events || []).map(ev => ({
+      date: ev.date,
+      type: ev.type,
+      memo: ev.memo || "",
+      dismissalReason: ev.dismissalReason || "",
+    })),
+    createdAt: log.createdAt,
+  }));
+}
+
+function exportSelectionProgressJson(logs) {
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    schema: "selection-progress-v1",
+    items: buildSelectionProgress(logs),
+  };
+  downloadTextFile(
+    JSON.stringify(payload, null, 2),
+    `selection-progress-${todayStamp()}.json`,
+    "application/json"
+  );
+}
+
+function exportSelectionProgressCsv(logs) {
+  const headers = [
+    "company","status","priority","route","agent","media","interviewDate","nextInterviewDate",
+    "interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles"
+  ];
+  const rows = buildSelectionProgress(logs).map(item => ({
+    ...item,
+    timeline: item.timeline.map(ev => `${ev.date} ${ev.type}${ev.memo ? `: ${ev.memo}` : ""}`).join(" / "),
+    materialFiles: item.materialFiles.map(f => `${f.name}${f.label ? ` (${f.label})` : ""}`).join(" / "),
+  }));
+  const csv = [
+    headers.map(csvCell).join(","),
+    ...rows.map(row => headers.map(h => csvCell(row[h])).join(",")),
+  ].join("\n");
+  downloadTextFile(`\ufeff${csv}`, `selection-progress-${todayStamp()}.csv`, "text/csv;charset=utf-8");
+}
+
+// ファイル本体は IndexedDB、会社データにはメタデータだけを保持する。
+// 将来 S3 / Amplify Storage に移す場合も、file id を storage key として扱える。
+const MATERIAL_DB_NAME = "job_log_material_files";
+const MATERIAL_DB_VERSION = 1;
+const MATERIAL_STORE = "files";
+
+function openMaterialDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(MATERIAL_DB_NAME, MATERIAL_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(MATERIAL_STORE)) db.createObjectStore(MATERIAL_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function materialDbRequest(mode, action) {
+  const db = await openMaterialDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MATERIAL_STORE, mode);
+    const store = tx.objectStore(MATERIAL_STORE);
+    const req = action(store);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+    tx.oncomplete = () => db.close();
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+const putMaterialFile = (id, blob) => materialDbRequest("readwrite", store => store.put(blob, id));
+const getMaterialFile = (id) => materialDbRequest("readonly", store => store.get(id));
+const deleteMaterialFile = (id) => materialDbRequest("readwrite", store => store.delete(id));
+
 // ── RichMemo コンポーネント ────────────────────────────────────────────
 // Quill で保存した HTML メモを表示する唯一のコンポーネント。
 // dangerouslySetInnerHTML / DOMPurify の呼び出しはすべてここに集約する。
@@ -246,7 +373,7 @@ const LOG_DEFAULTS = {
   events:         [],
 };
 
-const defaultDetails = () => ({ jobDescription:"", companyUrl:"", attachments:[] });
+const defaultDetails = () => ({ jobDescription:"", companyUrl:"", attachments:[], files:[] });
 
 // ── 企業理解セクション定義 ────────────────────────────────────────────
 const UNDERSTANDING_SECTIONS = [
@@ -265,7 +392,12 @@ const normalizeLog = (log) => ({
   ...LOG_DEFAULTS,
   ...log,
   details: log.details
-    ? { ...defaultDetails(), ...log.details, attachments: Array.isArray(log.details.attachments) ? log.details.attachments : [] }
+    ? {
+        ...defaultDetails(),
+        ...log.details,
+        attachments: Array.isArray(log.details.attachments) ? log.details.attachments : [],
+        files: Array.isArray(log.details.files) ? log.details.files : [],
+      }
     : defaultDetails(),
   companyUnderstanding: log.companyUnderstanding || null,
 });
@@ -693,19 +825,35 @@ function GoalsPanel() {
   );
 }
 
+function DataManagementPanel({ logs }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mt-4">
+      <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+        <Ic n="Download" size={15} cls="text-blue-500"/>
+        <span className="font-bold text-sm text-gray-800">データ管理</span>
+      </div>
+      <div className="p-4 grid grid-cols-2 gap-2">
+        <button
+          onClick={() => exportSelectionProgressJson(logs)}
+          className="flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 px-3 py-2 rounded-lg hover:bg-blue-100 transition-colors">
+          <Ic n="Download" size={13}/>進捗JSON
+        </button>
+        <button
+          onClick={() => exportSelectionProgressCsv(logs)}
+          className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-lg hover:bg-emerald-100 transition-colors">
+          <Ic n="Download" size={13}/>進捗CSV
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════
 // 一覧画面
 // ══════════════════════════════════════════════════════════════════
 function exportLogs(logs) {
   const json = JSON.stringify(logs, null, 2);
-  const blob = new Blob([json], { type: "application/json" });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement("a");
-  const date = new Date().toISOString().split("T")[0];
-  a.href     = url;
-  a.download = `job_logs_${date}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadTextFile(json, `job_logs_${todayStamp()}.json`, "application/json");
 }
 
 function ListScreen({ logs, onAdd, onDetail, onImport }) {
@@ -790,6 +938,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
           <aside className="w-full lg:w-72 lg:flex-shrink-0">
             <UpcomingPanel logs={logs} onDetail={onDetail}/>
             <GoalsPanel/>
+            <DataManagementPanel logs={logs}/>
           </aside>
 
           {/* メインコンテンツ */}
@@ -935,7 +1084,14 @@ function JobDetailsTab({ log, onUpdate }) {
   }));
 
   const handleSave = () => {
-    onUpdate(log.id, { details: { ...form, attachments: form.attachments.filter(u => u.trim()) } });
+    onUpdate(log.id, {
+      details: {
+        ...defaultDetails(),
+        ...(log.details || {}),
+        ...form,
+        attachments: form.attachments.filter(u => u.trim()),
+      },
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -1018,6 +1174,235 @@ function JobDetailsTab({ log, onUpdate }) {
       </button>
     </div>
   );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 資料ファイルタブ
+// ══════════════════════════════════════════════════════════════════
+function MaterialFilesTab({ log, onUpdate }) {
+  const files = Array.isArray(log.details?.files) ? log.details.files : [];
+  const fileInputRef = useRef(null);
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [expanded, setExpanded] = useState(true);
+
+  const updateFiles = (nextFiles) => {
+    onUpdate(log.id, {
+      details: {
+        ...defaultDetails(),
+        ...(log.details || {}),
+        files: nextFiles,
+      },
+    });
+  };
+
+  const handleUpload = async (e) => {
+    const selected = Array.from(e.target.files || []);
+    if (selected.length === 0) return;
+    setBusy(true);
+    setError("");
+    try {
+      const now = new Date().toISOString();
+      const metas = [];
+      for (const file of selected) {
+        const id = `${log.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        await putMaterialFile(id, file);
+        metas.push({
+          id,
+          name: file.name,
+          type: file.type || inferFileType(file.name),
+          size: file.size,
+          uploadedAt: now,
+          label: label.trim(),
+        });
+      }
+      updateFiles([...files, ...metas]);
+      setLabel("");
+    } catch (err) {
+      setError("ファイルの保存に失敗しました。ブラウザの空き容量やIndexedDB設定を確認してください。");
+    } finally {
+      setBusy(false);
+      e.target.value = "";
+    }
+  };
+
+  const openFile = async (meta) => {
+    setError("");
+    try {
+      const blob = await getMaterialFile(meta.id);
+      if (!blob) {
+        setError("ファイル本体が見つかりませんでした。メタデータだけが残っている可能性があります。");
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+    } catch {
+      setError("ファイルを開けませんでした。");
+    }
+  };
+
+  const downloadFile = async (meta) => {
+    setError("");
+    try {
+      const blob = await getMaterialFile(meta.id);
+      if (!blob) {
+        setError("ファイル本体が見つかりませんでした。");
+        return;
+      }
+      downloadBlob(blob, meta.name);
+    } catch {
+      setError("ファイルのダウンロードに失敗しました。");
+    }
+  };
+
+  const removeFile = async (meta) => {
+    if (!window.confirm(`${meta.name} を削除しますか？`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await deleteMaterialFile(meta.id);
+      updateFiles(files.filter(f => f.id !== meta.id));
+    } catch {
+      setError("ファイルの削除に失敗しました。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="w-full px-4 py-3 flex items-center justify-between text-left bg-gray-50 border-b border-gray-100">
+          <span className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+            <Ic n="FileText" size={13}/>資料ファイル
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{files.length}件</span>
+            <Ic n="ChevronDown" size={15} cls={`text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}/>
+          </span>
+        </button>
+
+        {expanded && (
+          <div className="p-4 space-y-4 fade-in">
+            <div className="grid sm:grid-cols-[1fr_auto] gap-2">
+              <input
+                type="text"
+                value={label}
+                onChange={e => setLabel(e.target.value)}
+                placeholder="分類ラベル / メモ（例: 求人票、面接資料、会社説明）"
+                className={inCls()}
+              />
+              <button
+                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                disabled={busy}
+                className="btn-blue inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white text-sm font-bold px-4 py-2.5 rounded-lg shadow-sm disabled:opacity-60">
+                <Ic n="Upload" size={14}/>{busy ? "保存中..." : "アップロード"}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.jpg,.jpeg,.gif,.webp,.md,.markdown,.txt,.rtf,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/*,text/*"
+                onChange={handleUpload}
+              />
+            </div>
+
+            {error && (
+              <p className="text-xs text-red-500 flex items-center gap-1.5">
+                <Ic n="AlertCircle" size={12}/>{error}
+              </p>
+            )}
+
+            {files.length === 0 ? (
+              <div className="text-center py-10">
+                <Ic n="FileText" size={30} cls="text-gray-200 mx-auto mb-2"/>
+                <p className="text-xs text-gray-400">資料ファイルはまだありません</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100 border border-gray-100 rounded-xl overflow-hidden">
+                {files.map(meta => (
+                  <div key={meta.id} className="px-3 py-2.5 bg-white hover:bg-gray-50 transition-colors">
+                    <div className="flex items-start gap-3">
+                      <button
+                        onClick={() => openFile(meta)}
+                        className="flex-1 min-w-0 text-left">
+                        <span className="block text-sm font-semibold text-gray-800 truncate">{meta.name}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
+                          <span>{displayFileType(meta)}</span>
+                          <span>{formatBytes(meta.size)}</span>
+                          <span>{formatDateTime(meta.uploadedAt)}</span>
+                          {meta.label && <span className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{meta.label}</span>}
+                        </span>
+                      </button>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button onClick={() => downloadFile(meta)} className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50" title="ダウンロード">
+                          <Ic n="Download" size={14}/>
+                        </button>
+                        <button onClick={() => removeFile(meta)} className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50" title="削除">
+                          <Ic n="Trash2" size={14}/>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function inferFileType(name) {
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  const map = {
+    pdf:"application/pdf",
+    doc:"application/msword",
+    docx:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ppt:"application/vnd.ms-powerpoint",
+    pptx:"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    md:"text/markdown",
+    markdown:"text/markdown",
+    txt:"text/plain",
+    png:"image/png",
+    jpg:"image/jpeg",
+    jpeg:"image/jpeg",
+    gif:"image/gif",
+    webp:"image/webp",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+function displayFileType(meta) {
+  const name = meta.name || "";
+  const ext = (name.split(".").pop() || "").toUpperCase();
+  if (ext) return ext;
+  return meta.type || "FILE";
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1439,7 +1824,7 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
 // ══════════════════════════════════════════════════════════════════
 function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDeleteEvent, onDelete, onUpdate }) {
   const [showForm,        setShowForm]        = useState(false);
-  const [activeTab,       setActiveTab]       = useState("timeline"); // "timeline" | "jobdetails" | "memo" | "understanding"
+  const [activeTab,       setActiveTab]       = useState("timeline"); // timeline | jobdetails | files | memo | understanding
   const [editingEventId,  setEditingEventId]  = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [expandedMemos,   setExpandedMemos]   = useState(new Set());
@@ -1536,6 +1921,15 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
                 : "text-gray-500 hover:text-gray-700"
             }`}>
             <Ic n="Briefcase" size={13}/>募集要項
+          </button>
+          <button
+            onClick={() => setActiveTab("files")}
+            className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-bold py-2 rounded-lg transition-all ${
+              activeTab === "files"
+                ? "bg-white text-blue-600 shadow-sm"
+                : "text-gray-500 hover:text-gray-700"
+            }`}>
+            <Ic n="FileText" size={13}/>資料
           </button>
           <button
             onClick={() => setActiveTab("memo")}
@@ -1683,6 +2077,13 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
         {activeTab === "jobdetails" && (
           <div className="fade-in">
             <JobDetailsTab log={log} onUpdate={onUpdate}/>
+          </div>
+        )}
+
+        {/* タブコンテンツ: 資料ファイル */}
+        {activeTab === "files" && (
+          <div className="fade-in">
+            <MaterialFilesTab log={log} onUpdate={onUpdate}/>
           </div>
         )}
 
