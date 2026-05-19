@@ -126,6 +126,10 @@ function buildSelectionProgress(logs) {
     media: log.media,
     status: log.stage,
     priority: log.priority,
+    holdReason: log.holdReason,
+    holdDate: log.holdDate,
+    holdReviewDate: log.holdReviewDate,
+    holdCategory: log.holdCategory,
     interviewDate: log.interviewDate,
     nextInterviewDate: getNextDate(log),
     interviewer: log.interviewer,
@@ -148,6 +152,9 @@ function buildSelectionProgress(logs) {
       type: ev.type,
       memo: ev.memo || "",
       dismissalReason: ev.dismissalReason || "",
+      holdReason: ev.holdReason || "",
+      holdReviewDate: ev.holdReviewDate || "",
+      holdCategory: ev.holdCategory || "",
     })),
     createdAt: log.createdAt,
   }));
@@ -168,8 +175,8 @@ function exportSelectionProgressJson(logs) {
 
 function exportSelectionProgressCsv(logs) {
   const headers = [
-    "company","status","priority","route","agent","media","interviewDate","nextInterviewDate",
-    "interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles"
+    "company","status","priority","route","agent","media","holdReason","holdDate","holdReviewDate","holdCategory",
+    "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles"
   ];
   const rows = buildSelectionProgress(logs).map(item => ({
     ...item,
@@ -254,6 +261,14 @@ const ROUTES = ["エージェント","直接応募","LinkedIn","リファラル"
 // 新しい理由を追加するときはここに文字列を1つ追加するだけ
 const DISMISSAL_REASONS = ["スキル不足","カルチャーフィット","ポジションクローズ","不明","その他"];
 
+// ── 保留メタ情報 ─────────────────────────────────────────────────────
+const HOLD_CATEGORIES = ["自分都合","企業側都合","情報不足","他社比較中","条件確認中"];
+const HOLD_STAGE_ALIASES = ["保留中","一旦保留","いったん保留","hold","on hold","pending"];
+const HOLD_STAGE = "保留";
+const CLOSED_STAGES = ["内定","お見送り","辞退"];
+const isHoldStage = (stage) => stage === HOLD_STAGE;
+const isActiveStage = (stage) => !CLOSED_STAGES.includes(stage) && !isHoldStage(stage);
+
 // ── 選考フェーズ & タイムライン種別 ─────────────────────────────────
 // 【拡張方法】新しいフェーズ/イベント種別を追加するときは
 //   TYPE_DEFS にオブジェクトを1行追加するだけ。
@@ -263,11 +278,13 @@ const DISMISSAL_REASONS = ["スキル不足","カルチャーフィット","ポ�
 //   isStage: false → タイムライン記録専用（フェーズ扱いしない）
 const TYPE_DEFS = [
   { key:"応募",           isStage:false, bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
+  { key:"応募中",         isStage:true,  bg:"bg-sky-50",      text:"text-sky-700",     dot:"bg-sky-500",     btn:"border-sky-400 bg-sky-50 text-sky-800"          },
   { key:"カジュアル面談", isStage:true,  bg:"bg-gray-100",    text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"       },
   { key:"書類選考中",     isStage:true,  bg:"bg-blue-50",     text:"text-blue-600",    dot:"bg-blue-400",    btn:"border-blue-400 bg-blue-50 text-blue-700"        },
   { key:"一次面接",       isStage:true,  bg:"bg-blue-100",    text:"text-blue-700",    dot:"bg-blue-500",    btn:"border-blue-500 bg-blue-100 text-blue-800"       },
   { key:"二次面接",       isStage:true,  bg:"bg-purple-50",   text:"text-purple-700",  dot:"bg-purple-500",  btn:"border-purple-400 bg-purple-50 text-purple-800"  },
   { key:"最終面接",       isStage:true,  bg:"bg-orange-50",   text:"text-orange-700",  dot:"bg-orange-400",  btn:"border-orange-400 bg-orange-50 text-orange-800"  },
+  { key:"保留",           isStage:true,  bg:"bg-amber-50",    text:"text-amber-700",   dot:"bg-amber-400",   btn:"border-amber-400 bg-amber-50 text-amber-800"     },
   { key:"内定",           isStage:true,  bg:"bg-emerald-50",  text:"text-emerald-700", dot:"bg-emerald-500", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
   { key:"お見送り",       isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
   { key:"辞退",           isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
@@ -365,6 +382,10 @@ const LOG_DEFAULTS = {
   media:          "",
   stage:          "書類選考中",
   priority:       "",
+  holdReason:     "",
+  holdDate:       "",
+  holdReviewDate: "",
+  holdCategory:   "",
   dismissalReason:"",
   dismissalNote:  "",
   interviewDate:  "",
@@ -388,19 +409,33 @@ const DEFAULT_UND_SECTION = { summary:"", points:[""], tags:[], highlights:[] };
 const defaultUnderstanding = () =>
   Object.fromEntries(UNDERSTANDING_SECTIONS.map(s => [s.key, { ...DEFAULT_UND_SECTION, points:[""] }]));
 
-const normalizeLog = (log) => ({
-  ...LOG_DEFAULTS,
-  ...log,
-  details: log.details
-    ? {
-        ...defaultDetails(),
-        ...log.details,
-        attachments: Array.isArray(log.details.attachments) ? log.details.attachments : [],
-        files: Array.isArray(log.details.files) ? log.details.files : [],
-      }
-    : defaultDetails(),
-  companyUnderstanding: log.companyUnderstanding || null,
-});
+const normalizeStage = (stage) => {
+  const value = String(stage || LOG_DEFAULTS.stage).trim();
+  return HOLD_STAGE_ALIASES.some(alias => alias.toLowerCase() === value.toLowerCase()) ? HOLD_STAGE : value;
+};
+
+const normalizeLog = (log) => {
+  const normalizedStage = normalizeStage(log.stage ?? log.status);
+  const holdReason = log.holdReason ?? log.pendingReason ?? log.pauseReason ?? "";
+  return {
+    ...LOG_DEFAULTS,
+    ...log,
+    stage: normalizedStage,
+    holdReason,
+    holdDate: log.holdDate ?? log.pendingDate ?? log.pausedAt ?? "",
+    holdReviewDate: log.holdReviewDate ?? log.reviewDate ?? log.nextReviewDate ?? "",
+    holdCategory: HOLD_CATEGORIES.includes(log.holdCategory) ? log.holdCategory : "",
+    details: log.details
+      ? {
+          ...defaultDetails(),
+          ...log.details,
+          attachments: Array.isArray(log.details.attachments) ? log.details.attachments : [],
+          files: Array.isArray(log.details.files) ? log.details.files : [],
+        }
+      : defaultDetails(),
+    companyUnderstanding: log.companyUnderstanding || null,
+  };
+};
 
 // ══════════════════════════════════════════════════════════════════
 // LocalStorage フック
@@ -421,12 +456,12 @@ function useLogs() {
     const initEvent = data.applicationDate
       ? [{ id:`${id}_e0`, date:data.applicationDate, type:"応募", memo:data.applicationMemo||"" }]
       : [];
-    const log = { ...data, id, events:initEvent, createdAt:new Date().toISOString(), details:defaultDetails() };
+    const log = normalizeLog({ ...data, id, events:initEvent, createdAt:new Date().toISOString(), details:defaultDetails() });
     delete log.applicationDate; delete log.applicationMemo;
     setLogs(p => [log, ...p]);
   };
 
-  const updateLog = (id, data) => setLogs(p => p.map(l => l.id===id ? {...l,...data} : l));
+  const updateLog = (id, data) => setLogs(p => p.map(l => l.id===id ? normalizeLog({...l,...data}) : l));
   const deleteLog = (id) => setLogs(p => p.filter(l => l.id!==id));
 
   const addEvent = (logId, ev) => {
@@ -436,7 +471,12 @@ function useLogs() {
       const newEv = { ...ev, id:evId };
       const sorted = [...(l.events||[]), newEv].sort((a,b)=>a.date.localeCompare(b.date));
       const newStage = STAGES.includes(ev.type) ? ev.type : l.stage;
-      const extra = ev.type==="お見送り" ? { dismissalReason:ev.dismissalReason||"", dismissalNote:ev.memo||"" } : {};
+      const extra =
+        ev.type==="お見送り"
+          ? { dismissalReason:ev.dismissalReason||"", dismissalNote:ev.memo||"" }
+          : ev.type===HOLD_STAGE
+            ? { holdReason:ev.holdReason||ev.memo||"", holdDate:ev.date||todayStamp(), holdReviewDate:ev.holdReviewDate||"", holdCategory:ev.holdCategory||"" }
+            : {};
       return { ...l, events:sorted, stage:newStage, ...extra };
     }));
   };
@@ -490,7 +530,7 @@ function useInterviewNotifications(logs) {
   const [seenIds, setSeenIds] = useState(() => getSeenIds());
 
   const notifications = logs
-    .filter(l => l.stage !== "お見送り" && l.stage !== "内定")
+    .filter(l => isActiveStage(l.stage))
     .flatMap(l => {
       const nextDate = getNextDate(l);
       if (!nextDate) return [];
@@ -582,6 +622,8 @@ const SVG_ICONS = {
   XCircle:      <><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></>,
   Download:     <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
   Upload:       <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></>,
+  LogOut:       <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></>,
+  PauseCircle:  <><circle cx="12" cy="12" r="10"/><line x1="10" y1="15" x2="10" y2="9"/><line x1="14" y1="15" x2="14" y2="9"/></>,
   Briefcase:    <><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></>,
   ExternalLink: <><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>,
   Bell:         <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></>,
@@ -662,7 +704,7 @@ function UpcomingPanel({ logs, onDetail }) {
   })();
 
   const allItems = logs
-    .filter(l => l.stage !== "お見送り")
+    .filter(l => isActiveStage(l.stage))
     .flatMap(l =>
       (l.events || [])
         .filter(e => e.date && e.date >= today)
@@ -870,8 +912,9 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const data = JSON.parse(ev.target.result);
-        if (!Array.isArray(data)) { alert("JSONファイルの形式が正しくありません（配列が必要です）"); return; }
+        const parsed = JSON.parse(ev.target.result);
+        const data = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.items) ? parsed.items : null);
+        if (!data) { alert("JSONファイルの形式が正しくありません（配列または items 配列が必要です）"); return; }
         const replace = window.confirm(
           `${data.length}件のデータを読み込みました。\n\n` +
           "【OK】既存データをすべて置き換える\n" +
@@ -888,17 +931,18 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
 
   const filtered = logs.filter(l => {
     const q = search.toLowerCase();
-    const ms = !q || [l.company, l.stage, l.route, l.agent, l.media].some(v => v && v.toLowerCase().includes(q));
+    const ms = !q || [l.company, l.stage, l.route, l.agent, l.media, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
     const mf = filterStage==="すべて" || l.stage===filterStage;
     const mp = filterPriority==="すべて" || l.priority===filterPriority;
     return ms && mf && mp;
   });
 
   const stats = [
-    { label:"応募中",   count:logs.filter(l=>!["内定","お見送り","辞退"].includes(l.stage)).length, color:"text-blue-600",    bg:"bg-blue-50 border-blue-100"    },
-    { label:"内定",     count:logs.filter(l=>l.stage==="内定").length,                              color:"text-emerald-600", bg:"bg-emerald-50 border-emerald-100" },
-    { label:"お見送り", count:logs.filter(l=>l.stage==="お見送り").length,                          color:"text-red-500",     bg:"bg-red-50 border-red-100"          },
-    { label:"辞退",     count:logs.filter(l=>l.stage==="辞退").length,                              color:"text-stone-600",   bg:"bg-stone-100 border-stone-200"     },
+    { label:"応募中",   count:logs.filter(l=>isActiveStage(l.stage)).length,      color:"text-blue-600",    bg:"bg-blue-50 border-blue-100"       },
+    { label:"保留",     count:logs.filter(l=>l.stage===HOLD_STAGE).length,        color:"text-amber-600",   bg:"bg-amber-50 border-amber-100"     },
+    { label:"内定",     count:logs.filter(l=>l.stage==="内定").length,            color:"text-emerald-600", bg:"bg-emerald-50 border-emerald-100" },
+    { label:"お見送り", count:logs.filter(l=>l.stage==="お見送り").length,        color:"text-red-500",     bg:"bg-red-50 border-red-100"         },
+    { label:"辞退",     count:logs.filter(l=>l.stage==="辞退").length,            color:"text-stone-600",   bg:"bg-stone-100 border-stone-200"    },
   ];
 
   return (
@@ -944,7 +988,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
           {/* メインコンテンツ */}
           <div className="flex-1 min-w-0">
             {/* 統計カード */}
-            <div className="grid grid-cols-4 gap-2 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
               {stats.map(s=>(
                 <div key={s.label} className={`border rounded-xl p-2.5 text-center ${s.bg}`}>
                   <div className={`text-xl font-bold ${s.color}`}>{s.count}</div>
@@ -1003,8 +1047,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
                   <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <Ic n="Building" size={30} cls="text-gray-300"/>
                   </div>
-                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
-                  {!search && filterStage==="すべて" && (
+                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて"||filterPriority!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
+                  {!search && filterStage==="すべて" && filterPriority==="すべて" && (
                     <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">最初の企業を追加する →</button>
                   )}
                 </div>
@@ -1038,6 +1082,23 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
                   {log.stage==="お見送り" && log.dismissalReason && (
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-red-500">
                       <Ic n="XCircle" size={12}/>お見送り理由: {log.dismissalReason}
+                    </div>
+                  )}
+
+                  {/* 保留理由 */}
+                  {log.stage===HOLD_STAGE && (
+                    <div className="mt-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-amber-700 font-semibold">
+                        <span className="flex items-center gap-1.5"><Ic n="PauseCircle" size={12}/>保留</span>
+                        {log.holdCategory && <span>{log.holdCategory}</span>}
+                        {log.holdDate && <span>保留日: {log.holdDate}</span>}
+                        {log.holdReviewDate && <span>再確認: {log.holdReviewDate}</span>}
+                      </div>
+                      {log.holdReason && (
+                        <p className="mt-1 text-xs text-amber-800 leading-relaxed line-clamp-2 whitespace-pre-wrap">
+                          {log.holdReason}
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1899,6 +1960,23 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
               <p className="text-xs font-bold text-stone-600">辞退（自己都合）</p>
             </div>
           )}
+          {log.stage===HOLD_STAGE && (
+            <div className="mt-1 p-3 bg-amber-50 rounded-lg border border-amber-100">
+              <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+                <Ic n="PauseCircle" size={12}/>保留理由
+              </p>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-amber-700">
+                {log.holdCategory && <span>区分: {log.holdCategory}</span>}
+                {log.holdDate && <span>保留日: {log.holdDate}</span>}
+                {log.holdReviewDate && <span>再確認予定日: {log.holdReviewDate}</span>}
+              </div>
+              {log.holdReason ? (
+                <p className="mt-2 text-xs text-amber-900 leading-relaxed whitespace-pre-wrap">{log.holdReason}</p>
+              ) : (
+                <p className="mt-2 text-xs text-amber-600">保留理由は未入力です</p>
+              )}
+            </div>
+          )}
           <RichMemo html={log.memo} className="text-xs text-gray-500 mt-2" />
         </div>
 
@@ -2029,6 +2107,13 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
                               {ev.type==="お見送り" && ev.dismissalReason && (
                                 <p className="text-xs text-red-500 font-semibold px-3.5 pb-2">理由: {ev.dismissalReason}</p>
                               )}
+                              {ev.type===HOLD_STAGE && (
+                                <div className="px-3.5 pb-2 text-xs text-amber-700">
+                                  {ev.holdCategory && <p className="font-semibold">区分: {ev.holdCategory}</p>}
+                                  {ev.holdReviewDate && <p>再確認予定日: {ev.holdReviewDate}</p>}
+                                  {ev.holdReason && <p className="mt-1 whitespace-pre-wrap leading-relaxed">保留理由: {ev.holdReason}</p>}
+                                </div>
+                              )}
 
                               {/* 削除確認 */}
                               {isConfirm && (
@@ -2110,9 +2195,10 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
 // ══════════════════════════════════════════════════════════════════
 function EventForm({ onSave, onCancel }) {
   const todayStr = new Date().toISOString().split("T")[0];
-  const [form, setForm] = useState({ date:todayStr, type:"一次面接", memo:"", dismissalReason:"" });
+  const [form, setForm] = useState({ date:todayStr, type:"一次面接", memo:"", dismissalReason:"", holdReason:"", holdReviewDate:"", holdCategory:"" });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const isDismissal = form.type==="お見送り";
+  const isHold = form.type===HOLD_STAGE;
 
   return (
     <div className="bg-white rounded-xl border border-blue-100 shadow-md p-4 space-y-4">
@@ -2138,6 +2224,27 @@ function EventForm({ onSave, onCancel }) {
               <option value="">選択してください</option>
               {DISMISSAL_REASONS.map(r=><option key={r} value={r}>{r}</option>)}
             </select>
+          </FormField>
+        </div>
+      )}
+
+      {isHold && (
+        <div className="fade-in space-y-3 rounded-lg bg-amber-50/60 border border-amber-100 p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="保留区分">
+              <select value={form.holdCategory} onChange={e=>set("holdCategory",e.target.value)} className={inCls()}>
+                <option value="">選択してください</option>
+                {HOLD_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            </FormField>
+            <FormField label="再確認予定日">
+              <input type="date" value={form.holdReviewDate} onChange={e=>set("holdReviewDate",e.target.value)} className={inCls()}/>
+            </FormField>
+          </div>
+          <FormField label="保留理由">
+            <textarea value={form.holdReason} onChange={e=>set("holdReason",e.target.value)}
+              placeholder="例）他社選考の状況を見て判断したい"
+              rows={3} className={inCls()+" resize-none"}/>
           </FormField>
         </div>
       )}
@@ -2173,9 +2280,13 @@ function EditEventForm({ event, onSave, onCancel }) {
     type:            event.type,
     memo:            event.memo            || "",
     dismissalReason: event.dismissalReason || "",
+    holdReason:      event.holdReason      || "",
+    holdReviewDate:  event.holdReviewDate  || "",
+    holdCategory:    event.holdCategory    || "",
   });
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
   const isDismissal = form.type==="お見送り";
+  const isHold = form.type===HOLD_STAGE;
 
   return (
     <div className="slide-in bg-blue-50/60 rounded-xl border border-blue-100 shadow-sm p-4 space-y-3">
@@ -2199,6 +2310,26 @@ function EditEventForm({ event, onSave, onCancel }) {
               <option value="">選択してください</option>
               {DISMISSAL_REASONS.map(r=><option key={r} value={r}>{r}</option>)}
             </select>
+          </FormField>
+        </div>
+      )}
+      {isHold && (
+        <div className="fade-in space-y-3 rounded-lg bg-amber-50/60 border border-amber-100 p-3">
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="保留区分">
+              <select value={form.holdCategory} onChange={e=>set("holdCategory",e.target.value)} className={inCls()}>
+                <option value="">選択してください</option>
+                {HOLD_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+              </select>
+            </FormField>
+            <FormField label="再確認予定日">
+              <input type="date" value={form.holdReviewDate} onChange={e=>set("holdReviewDate",e.target.value)} className={inCls()}/>
+            </FormField>
+          </div>
+          <FormField label="保留理由">
+            <textarea value={form.holdReason} onChange={e=>set("holdReason",e.target.value)}
+              placeholder="例）条件面がまだ判断しづらい"
+              rows={3} className={inCls()+" resize-none"}/>
           </FormField>
         </div>
       )}
@@ -2249,7 +2380,12 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
 
   const set = (k,v) => { setForm(f=>({...f,[k]:v})); setErrors(e=>({...e,[k]:undefined})); };
   const handleRoute = (v) => setForm(f=>({...f, route:v, agent:"", media:""}));
-  const handleStage = (v) => setForm(f=>({...f, stage:v, dismissalReason:v!=="お見送り"?"":f.dismissalReason}));
+  const handleStage = (v) => setForm(f=>({
+    ...f,
+    stage:v,
+    dismissalReason:v!=="お見送り"?"":f.dismissalReason,
+    holdDate:v===HOLD_STAGE ? (f.holdDate || todayStamp()) : f.holdDate,
+  }));
 
   const validate = () => {
     const e={};
@@ -2264,6 +2400,7 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
   const showAgent     = form.route==="エージェント";
   const showMedia     = form.route==="その他";
   const showDismissal = form.stage==="お見送り";
+  const showHold      = form.stage===HOLD_STAGE;
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -2386,6 +2523,31 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
                 <textarea value={form.dismissalNote} onChange={e=>set("dismissalNote",e.target.value)}
                   placeholder="詳細や振り返りのメモ..."
                   rows={3} className={inCls()+" resize-none"}/>
+              </FormField>
+            </div>
+          )}
+
+          {/* 保留理由（保留選択時のみ） */}
+          {showHold && (
+            <div className="p-4 space-y-3 fade-in bg-amber-50/40">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <FormField label="保留にした日付">
+                  <input type="date" value={form.holdDate} onChange={e=>set("holdDate",e.target.value)} className={inCls()}/>
+                </FormField>
+                <FormField label="再確認予定日">
+                  <input type="date" value={form.holdReviewDate} onChange={e=>set("holdReviewDate",e.target.value)} className={inCls()}/>
+                </FormField>
+                <FormField label="保留区分">
+                  <select value={form.holdCategory} onChange={e=>set("holdCategory",e.target.value)} className={inCls()}>
+                    <option value="">選択してください</option>
+                    {HOLD_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                </FormField>
+              </div>
+              <FormField label="保留理由">
+                <textarea value={form.holdReason} onChange={e=>set("holdReason",e.target.value)}
+                  placeholder={"例）他社選考の状況を見て判断したい\n例）条件面がまだ判断しづらい\n例）業務内容がやや運用寄りで迷っている"}
+                  rows={4} className={inCls()+" resize-y"}/>
               </FormField>
             </div>
           )}
