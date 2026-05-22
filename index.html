@@ -126,6 +126,13 @@ function buildSelectionProgress(logs) {
     media: log.media,
     status: log.stage,
     priority: log.priority,
+    axisMatch: log.axisMatch,
+    techExpectation: log.techExpectation,
+    improvementFit: log.improvementFit,
+    concerns: log.concerns,
+    nextQuestions: log.nextQuestions,
+    postMeetingDecision: log.postMeetingDecision,
+    decisionReason: log.decisionReason,
     holdReason: log.holdReason,
     holdDate: log.holdDate,
     holdReviewDate: log.holdReviewDate,
@@ -175,7 +182,8 @@ function exportSelectionProgressJson(logs) {
 
 function exportSelectionProgressCsv(logs) {
   const headers = [
-    "company","status","priority","route","agent","media","holdReason","holdDate","holdReviewDate","holdCategory",
+    "company","status","priority","route","agent","media","axisMatch","techExpectation","improvementFit",
+    "concerns","nextQuestions","postMeetingDecision","decisionReason","holdReason","holdDate","holdReviewDate","holdCategory",
     "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles"
   ];
   const rows = buildSelectionProgress(logs).map(item => ({
@@ -309,6 +317,19 @@ const PRIORITY_DEFS = [
 const PRIORITIES   = PRIORITY_DEFS.map(p => p.key);
 const PRIORITY_CFG = Object.fromEntries(PRIORITY_DEFS.map(p => [p.key, p]));
 
+// ── 企業ごとの判断項目 ───────────────────────────────────────────────
+const ASSESSMENT_LEVELS = ["高","中","低"];
+const POST_MEETING_DECISIONS = ["進む","保留","見送り"];
+const COMPANY_DECISION_DEFAULTS = {
+  axisMatch:           "",
+  techExpectation:     "",
+  improvementFit:      "",
+  concerns:            "",
+  nextQuestions:       "",
+  postMeetingDecision: "",
+  decisionReason:      "",
+};
+
 // ══════════════════════════════════════════════════════════════════
 // モックデータ
 // ══════════════════════════════════════════════════════════════════
@@ -382,6 +403,7 @@ const LOG_DEFAULTS = {
   media:          "",
   stage:          "書類選考中",
   priority:       "",
+  ...COMPANY_DECISION_DEFAULTS,
   holdReason:     "",
   holdDate:       "",
   holdReviewDate: "",
@@ -867,6 +889,128 @@ function GoalsPanel() {
   );
 }
 
+// ══════════════════════════════════════════════════════════════════
+// 活動軸・判断基準ページ
+// ══════════════════════════════════════════════════════════════════
+const ACTIVITY_CRITERIA_KEY = "activity_criteria_v1";
+const ACTIVITY_CRITERIA_FIELDS = [
+  { key:"reason", label:"転職理由", placeholder:"なぜ転職するのか、現職で解消したい課題、次に実現したい状態..." },
+  { key:"axis", label:"転職軸", placeholder:"譲れない軸、あると嬉しい条件、優先順位..." },
+  { key:"position", label:"希望職種・ポジション", placeholder:"職種、役割、担当領域、避けたい業務範囲..." },
+  { key:"strengths", label:"強み", placeholder:"経験・スキル・成果・再現性のある得意領域..." },
+  { key:"concerns", label:"懸念への回答", placeholder:"面接で聞かれやすい懸念と、それに対する回答メモ..." },
+  { key:"caseMemo", label:"代表案件の説明メモ", placeholder:"代表案件の概要、課題、役割、工夫、成果..." },
+];
+const JOB_CRITERIA_FIELDS = [
+  { key:"goodCompanies", label:"進んでよい会社", placeholder:"選考を前向きに進める条件、判断材料、魅力に感じる要素..." },
+  { key:"carefulCompanies", label:"慎重に見る会社", placeholder:"確認が必要な条件、見送り候補のサイン、質問したい点..." },
+];
+const defaultActivityCriteria = () =>
+  Object.fromEntries([...ACTIVITY_CRITERIA_FIELDS, ...JOB_CRITERIA_FIELDS].map(f => [f.key, ""]));
+
+function ActivityCriteriaNavPanel({ onOpen }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mt-4">
+      <button
+        onClick={onOpen}
+        className="w-full px-4 py-3 flex items-center gap-2 text-left hover:bg-blue-50 transition-colors">
+        <Ic n="BookOpen" size={15} cls="text-blue-500"/>
+        <span className="font-bold text-sm text-gray-800">活動軸・判断基準</span>
+        <Ic n="ChevronRight" size={14} cls="ml-auto text-gray-300"/>
+      </button>
+    </div>
+  );
+}
+
+function CriteriaTextarea({ label, value, placeholder, onChange, minHeight = 130 }) {
+  return (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+      <label className="block text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider">{label}</label>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3.5 py-3 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y leading-relaxed"
+        style={{minHeight}}
+      />
+    </div>
+  );
+}
+
+function ActivityCriteriaScreen({ onBack }) {
+  const [data, setData] = useState(() => {
+    try {
+      const s = localStorage.getItem(ACTIVITY_CRITERIA_KEY);
+      return { ...defaultActivityCriteria(), ...(s ? JSON.parse(s) : {}) };
+    } catch {
+      return defaultActivityCriteria();
+    }
+  });
+  const [saved, setSaved] = useState(false);
+  const savedTimerRef = useRef(null);
+
+  const update = (key, value) => {
+    setData(prev => {
+      const next = { ...prev, [key]: value };
+      localStorage.setItem(ACTIVITY_CRITERIA_KEY, JSON.stringify(next));
+      return next;
+    });
+    setSaved(true);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    savedTimerRef.current = setTimeout(() => setSaved(false), 1400);
+  };
+
+  useEffect(() => () => savedTimerRef.current && clearTimeout(savedTimerRef.current), []);
+
+  return (
+    <div className="flex flex-col min-h-screen">
+      <header className="sticky top-0 z-20 bg-blue-600 shadow-lg">
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-3">
+          <button onClick={onBack} className="p-1.5 -ml-1 rounded-lg bg-white/15 hover:bg-white/25 transition-colors flex-shrink-0">
+            <Ic n="ChevronLeft" size={20} cls="text-white"/>
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-white font-bold text-lg leading-tight truncate">活動軸・判断基準</h1>
+            <p className="text-blue-200 text-xs mt-0.5 truncate">選考を進める前に見返す判断メモ</p>
+          </div>
+          {saved && <span className="text-xs font-bold text-white bg-white/20 px-2 py-1 rounded-full">保存済み</span>}
+        </div>
+      </header>
+
+      <main className="max-w-3xl mx-auto w-full px-4 py-5 pb-12 space-y-4">
+        {ACTIVITY_CRITERIA_FIELDS.map(field => (
+          <CriteriaTextarea
+            key={field.key}
+            label={field.label}
+            value={data[field.key] || ""}
+            placeholder={field.placeholder}
+            onChange={value => update(field.key, value)}
+          />
+        ))}
+
+        <section className="space-y-3">
+          <div className="flex items-center gap-2 px-1">
+            <Ic n="Briefcase" size={15} cls="text-blue-500"/>
+            <h2 className="font-bold text-sm text-gray-800">求人判断基準</h2>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            {JOB_CRITERIA_FIELDS.map(field => (
+              <CriteriaTextarea
+                key={field.key}
+                label={field.label}
+                value={data[field.key] || ""}
+                placeholder={field.placeholder}
+                onChange={value => update(field.key, value)}
+                minHeight={220}
+              />
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
 function DataManagementPanel({ logs }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mt-4">
@@ -898,7 +1042,7 @@ function exportLogs(logs) {
   downloadTextFile(json, `job_logs_${todayStamp()}.json`, "application/json");
 }
 
-function ListScreen({ logs, onAdd, onDetail, onImport }) {
+function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
   const [search,          setSearch]          = useState("");
   const [filterStage,     setFilterStage]     = useState("すべて");
   const [filterPriority,  setFilterPriority]  = useState("すべて");
@@ -982,6 +1126,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport }) {
           <aside className="w-full lg:w-72 lg:flex-shrink-0">
             <UpcomingPanel logs={logs} onDetail={onDetail}/>
             <GoalsPanel/>
+            <ActivityCriteriaNavPanel onOpen={onOpenCriteria}/>
             <DataManagementPanel logs={logs}/>
           </aside>
 
@@ -1514,22 +1659,60 @@ function RichTextEditor({ value, onChange, placeholder }) {
 // ══════════════════════════════════════════════════════════════════
 // メモタブ（企業詳細）
 // ══════════════════════════════════════════════════════════════════
-function MemoTab({ log, onUpdate }) {
+function MemoTab({ log, onUpdate, onOpenCriteria }) {
   const [memo, setMemo] = useState(log.memo || "");
+  const [decision, setDecision] = useState(() => ({
+    ...COMPANY_DECISION_DEFAULTS,
+    ...Object.fromEntries(Object.keys(COMPANY_DECISION_DEFAULTS).map(k => [k, log[k] || ""])),
+  }));
   const [saved, setSaved] = useState(false);
 
+  const setDecisionField = (key, value) => setDecision(d => ({ ...d, [key]: value }));
+
   const handleSave = () => {
-    onUpdate(log.id, { memo });
+    onUpdate(log.id, { memo, ...decision });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const assessmentRows = [
+    { key:"axisMatch", label:"転職軸との一致度" },
+    { key:"techExpectation", label:"技術期待値" },
+    { key:"improvementFit", label:"業務改善・仕組み化との親和性" },
+  ];
+
+  const renderSegmented = (key, options) => (
+    <div className="grid grid-cols-3 gap-2">
+      {options.map(opt => {
+        const selected = decision[key] === opt;
+        return (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => setDecisionField(key, selected ? "" : opt)}
+            className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${
+              selected ? "bg-blue-50 text-blue-700 border-blue-400 shadow-sm" : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"
+            }`}>
+            {opt}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-3">
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-          <Ic n="FileText" size={13}/>自由メモ
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Ic n="FileText" size={13}/>自由メモ
+          </p>
+          <button
+            onClick={onOpenCriteria}
+            className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors">
+            <Ic n="BookOpen" size={12}/>活動軸
+          </button>
+        </div>
         <RichTextEditor
           key={log.id}
           value={memo}
@@ -1537,6 +1720,59 @@ function MemoTab({ log, onUpdate }) {
           placeholder="企業に関するメモを自由に記入してください..."
         />
       </div>
+
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50 overflow-hidden">
+        <div className="p-4">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Ic n="Briefcase" size={13}/>判断項目
+          </p>
+        </div>
+
+        <div className="p-4 grid gap-4 sm:grid-cols-3">
+          {assessmentRows.map(row => (
+            <FormField key={row.key} label={row.label}>
+              {renderSegmented(row.key, ASSESSMENT_LEVELS)}
+            </FormField>
+          ))}
+        </div>
+
+        <div className="p-4 space-y-3">
+          <FormField label="懸念点">
+            <textarea
+              value={decision.concerns}
+              onChange={e => setDecisionField("concerns", e.target.value)}
+              placeholder="引っかかっている点、確認不足の点、リスク..."
+              rows={3}
+              className={inCls()+" resize-y"}
+            />
+          </FormField>
+          <FormField label="次回確認したい質問">
+            <textarea
+              value={decision.nextQuestions}
+              onChange={e => setDecisionField("nextQuestions", e.target.value)}
+              placeholder="次回面談・面接で聞きたいこと..."
+              rows={3}
+              className={inCls()+" resize-y"}
+            />
+          </FormField>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <FormField label="面談後の判断">
+            {renderSegmented("postMeetingDecision", POST_MEETING_DECISIONS)}
+          </FormField>
+          <FormField label="判断理由メモ">
+            <textarea
+              value={decision.decisionReason}
+              onChange={e => setDecisionField("decisionReason", e.target.value)}
+              placeholder="なぜ進む / 保留 / 見送りと判断したか..."
+              rows={4}
+              className={inCls()+" resize-y"}
+            />
+          </FormField>
+        </div>
+      </div>
+
       <button onClick={handleSave}
         className={`btn-blue w-full py-3 rounded-xl font-bold text-sm shadow-sm transition-all ${
           saved ? "bg-emerald-500 text-white" : "bg-blue-600 text-white"
@@ -1883,7 +2119,7 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
 // ══════════════════════════════════════════════════════════════════
 // タイムライン（企業詳細）画面
 // ══════════════════════════════════════════════════════════════════
-function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDeleteEvent, onDelete, onUpdate }) {
+function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDeleteEvent, onDelete, onUpdate, onOpenCriteria }) {
   const [showForm,        setShowForm]        = useState(false);
   const [activeTab,       setActiveTab]       = useState("timeline"); // timeline | jobdetails | files | memo | understanding
   const [editingEventId,  setEditingEventId]  = useState(null);
@@ -1944,6 +2180,13 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
               {PRIORITIES.map(p=><option key={p} value={p}>{p}</option>)}
             </select>
           </div>
+          <button
+            onClick={onOpenCriteria}
+            className="mb-3 w-full flex items-center gap-2 text-left bg-blue-50 border border-blue-100 text-blue-700 px-3 py-2.5 rounded-lg hover:bg-blue-100 transition-colors">
+            <Ic n="BookOpen" size={14}/>
+            <span className="text-xs font-bold flex-1">活動軸・判断基準を確認する</span>
+            <Ic n="ChevronRight" size={13} cls="text-blue-300"/>
+          </button>
           {log.interviewer && (
             <div className="flex items-center gap-1.5 text-sm text-gray-600 mb-2">
               <Ic n="User" size={14} cls="text-gray-400"/>{log.interviewer}
@@ -2175,7 +2418,7 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
         {/* タブコンテンツ: メモ */}
         {activeTab === "memo" && (
           <div className="fade-in">
-            <MemoTab log={log} onUpdate={onUpdate}/>
+            <MemoTab log={log} onUpdate={onUpdate} onOpenCriteria={onOpenCriteria}/>
           </div>
         )}
 
@@ -2606,7 +2849,7 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
 function App() {
   const { logs, setLogs, addLog, updateLog, deleteLog, addEvent, updateEvent, deleteEvent } = useLogs();
   const { notifications, dismiss, dismissAll } = useInterviewNotifications(logs);
-  const [screen,   setScreen]   = useState("list"); // list | detail | add | edit
+  const [screen,   setScreen]   = useState("list"); // list | detail | add | edit | criteria
   const [selected, setSelected] = useState(null);
 
   // logs 更新後も選択中ログを最新に保つ
@@ -2616,6 +2859,8 @@ function App() {
   const goDetail = (log) => { setSelected(log); setScreen("detail"); };
   const goAdd    = () => setScreen("add");
   const goEdit   = () => setScreen("edit");
+  const goCriteria = () => setScreen("criteria");
+  const backFromCriteria = () => setScreen(selected ? "detail" : "list");
 
   const handleImport = (data, replace) => {
     const normalized = data.map(normalizeLog);
@@ -2656,11 +2901,15 @@ function App() {
           onUpdateEvent={updateEvent}
           onDeleteEvent={deleteEvent}
           onUpdate={updateLog}
+          onOpenCriteria={goCriteria}
           onDelete={() => { deleteLog(selectedLog.id); goList(); }}
         />
       )}
+      {screen==="criteria" && (
+        <ActivityCriteriaScreen onBack={backFromCriteria}/>
+      )}
       {screen==="list" && (
-        <ListScreen logs={logs} onAdd={goAdd} onDetail={goDetail} onImport={handleImport}/>
+        <ListScreen logs={logs} onAdd={goAdd} onDetail={goDetail} onImport={handleImport} onOpenCriteria={goCriteria}/>
       )}
     </>
   );
