@@ -113,8 +113,39 @@ function downloadTextFile(text, filename, type) {
 }
 
 function csvCell(value) {
-  const text = String(value ?? "").replace(/\r?\n/g, " ");
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function buildCsv(headers, rows) {
+  return [
+    headers.map(csvCell).join(","),
+    ...rows.map(row => headers.map(h => csvCell(row[h])).join(",")),
+  ].join("\n");
+}
+
+function downloadCsvWithBom(csv, filename) {
+  downloadTextFile(`\ufeff${csv}`, filename, "text/csv;charset=utf-8");
+}
+
+function dateOnly(value) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function getLastUpdatedDate(log) {
+  if (log.updatedAt) return dateOnly(log.updatedAt);
+  const dates = [log.createdAt, ...(log.events || []).map(ev => ev.date)]
+    .map(dateOnly)
+    .filter(Boolean)
+    .sort();
+  return dates.length ? dates[dates.length - 1] : "";
 }
 
 function buildSelectionProgress(logs) {
@@ -164,6 +195,7 @@ function buildSelectionProgress(logs) {
       holdCategory: ev.holdCategory || "",
     })),
     createdAt: log.createdAt,
+    updatedAt: log.updatedAt,
   }));
 }
 
@@ -180,22 +212,56 @@ function exportSelectionProgressJson(logs) {
   );
 }
 
-function exportSelectionProgressCsv(logs) {
+function exportSelectionProgressBackupCsv(logs) {
   const headers = [
     "company","status","priority","route","agent","media","axisMatch","techExpectation","improvementFit",
     "concerns","nextQuestions","postMeetingDecision","decisionReason","holdReason","holdDate","holdReviewDate","holdCategory",
-    "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles"
+    "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles","createdAt","updatedAt"
   ];
   const rows = buildSelectionProgress(logs).map(item => ({
     ...item,
     timeline: item.timeline.map(ev => `${ev.date} ${ev.type}${ev.memo ? `: ${ev.memo}` : ""}`).join(" / "),
     materialFiles: item.materialFiles.map(f => `${f.name}${f.label ? ` (${f.label})` : ""}`).join(" / "),
   }));
-  const csv = [
-    headers.map(csvCell).join(","),
-    ...rows.map(row => headers.map(h => csvCell(row[h])).join(",")),
-  ].join("\n");
-  downloadTextFile(`\ufeff${csv}`, `selection-progress-${todayStamp()}.csv`, "text/csv;charset=utf-8");
+  downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-backup-${todayStamp()}.csv`);
+}
+
+function exportSelectionProgressExternalCsv(logs) {
+  const headers = [
+    "企業名",
+    "現在の状況",
+    "志望度・優先度",
+    "応募経路",
+    "媒体",
+    "担当エージェント",
+    "転職軸との一致度",
+    "技術・業務内容への期待",
+    "魅力に感じた点",
+    "懸念点",
+    "次回確認したいこと",
+    "面談後メモ",
+    "応募判断",
+    "保留理由",
+    "最終更新日",
+  ];
+  const rows = logs.map(log => ({
+    "企業名": log.company || "",
+    "現在の状況": log.stage || "",
+    "志望度・優先度": log.priority || "",
+    "応募経路": log.route || "",
+    "媒体": log.media || "",
+    "担当エージェント": log.agent || "",
+    "転職軸との一致度": log.axisMatch || "",
+    "技術・業務内容への期待": log.techExpectation || "",
+    "魅力に感じた点": log.improvement || log.improvementFit || "",
+    "懸念点": log.concerns || "",
+    "次回確認したいこと": log.nextQuestion || log.nextQuestions || "",
+    "面談後メモ": log.postMeeting || log.decisionReason || "",
+    "応募判断": log.decisionReach || log.postMeetingDecision || "",
+    "保留理由": log.holdReason || "",
+    "最終更新日": getLastUpdatedDate(log),
+  }));
+  downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-external-${todayStamp()}.csv`);
 }
 
 // ファイル本体は IndexedDB、会社データにはメタデータだけを保持する。
@@ -478,12 +544,13 @@ function useLogs() {
     const initEvent = data.applicationDate
       ? [{ id:`${id}_e0`, date:data.applicationDate, type:"応募", memo:data.applicationMemo||"" }]
       : [];
-    const log = normalizeLog({ ...data, id, events:initEvent, createdAt:new Date().toISOString(), details:defaultDetails() });
+    const now = new Date().toISOString();
+    const log = normalizeLog({ ...data, id, events:initEvent, createdAt:now, updatedAt:now, details:defaultDetails() });
     delete log.applicationDate; delete log.applicationMemo;
     setLogs(p => [log, ...p]);
   };
 
-  const updateLog = (id, data) => setLogs(p => p.map(l => l.id===id ? normalizeLog({...l,...data}) : l));
+  const updateLog = (id, data) => setLogs(p => p.map(l => l.id===id ? normalizeLog({...l,...data,updatedAt:new Date().toISOString()}) : l));
   const deleteLog = (id) => setLogs(p => p.filter(l => l.id!==id));
 
   const addEvent = (logId, ev) => {
@@ -499,7 +566,7 @@ function useLogs() {
           : ev.type===HOLD_STAGE
             ? { holdReason:ev.holdReason||ev.memo||"", holdDate:ev.date||todayStamp(), holdReviewDate:ev.holdReviewDate||"", holdCategory:ev.holdCategory||"" }
             : {};
-      return { ...l, events:sorted, stage:newStage, ...extra };
+      return { ...l, events:sorted, stage:newStage, updatedAt:new Date().toISOString(), ...extra };
     }));
   };
 
@@ -508,12 +575,12 @@ function useLogs() {
       if (l.id !== logId) return l;
       const updated = (l.events||[]).map(e => e.id===evId ? {...e,...data} : e);
       const sorted = [...updated].sort((a,b)=>a.date.localeCompare(b.date));
-      return { ...l, events: sorted };
+      return { ...l, events: sorted, updatedAt:new Date().toISOString() };
     }));
   };
 
   const deleteEvent = (logId, evId) =>
-    setLogs(p => p.map(l => l.id!==logId ? l : { ...l, events:l.events.filter(e=>e.id!==evId) }));
+    setLogs(p => p.map(l => l.id!==logId ? l : { ...l, events:l.events.filter(e=>e.id!==evId), updatedAt:new Date().toISOString() }));
 
   return { logs, setLogs, addLog, updateLog, deleteLog, addEvent, updateEvent, deleteEvent };
 }
@@ -1018,16 +1085,21 @@ function DataManagementPanel({ logs }) {
         <Ic n="Download" size={15} cls="text-blue-500"/>
         <span className="font-bold text-sm text-gray-800">データ管理</span>
       </div>
-      <div className="p-4 grid grid-cols-2 gap-2">
+      <div className="p-4 grid grid-cols-1 gap-2">
         <button
           onClick={() => exportSelectionProgressJson(logs)}
           className="flex items-center justify-center gap-1.5 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 px-3 py-2 rounded-lg hover:bg-blue-100 transition-colors">
           <Ic n="Download" size={13}/>進捗JSON
         </button>
         <button
-          onClick={() => exportSelectionProgressCsv(logs)}
+          onClick={() => exportSelectionProgressExternalCsv(logs)}
           className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-lg hover:bg-emerald-100 transition-colors">
-          <Ic n="Download" size={13}/>進捗CSV
+          <Ic n="Download" size={13}/>外部共有用CSVをダウンロード
+        </button>
+        <button
+          onClick={() => exportSelectionProgressBackupCsv(logs)}
+          className="flex items-center justify-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
+          <Ic n="Download" size={13}/>内部バックアップCSVをダウンロード
         </button>
       </div>
     </div>
