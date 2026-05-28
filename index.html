@@ -156,6 +156,12 @@ function buildSelectionProgress(logs) {
     agent: log.agent,
     media: log.media,
     status: log.stage,
+    jobPosition: log.jobPosition,
+    selectionPhase: log.selectionPhase,
+    resultDecision: log.resultDecision,
+    withdrawalReason: log.withdrawalReason,
+    rejectionReason: log.rejectionReason,
+    statusNote: log.statusNote,
     priority: log.priority,
     axisMatch: log.axisMatch,
     techExpectation: log.techExpectation,
@@ -214,7 +220,7 @@ function exportSelectionProgressJson(logs) {
 
 function exportSelectionProgressBackupCsv(logs) {
   const headers = [
-    "company","status","priority","route","agent","media","axisMatch","techExpectation","improvementFit",
+    "company","status","jobPosition","selectionPhase","resultDecision","priority","route","agent","media","withdrawalReason","rejectionReason","statusNote","axisMatch","techExpectation","improvementFit",
     "concerns","nextQuestions","postMeetingDecision","decisionReason","holdReason","holdDate","holdReviewDate","holdCategory",
     "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles","createdAt","updatedAt"
   ];
@@ -224,6 +230,69 @@ function exportSelectionProgressBackupCsv(logs) {
     materialFiles: item.materialFiles.map(f => `${f.name}${f.label ? ` (${f.label})` : ""}`).join(" / "),
   }));
   downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-backup-${todayStamp()}.csv`);
+}
+
+function buildMaynaviStatusText(log) {
+  const stage = log.stage || "";
+  const decision = log.resultDecision || inferResultDecision(stage);
+  const phase = log.selectionPhase || inferSelectionPhase(stage);
+  if (decision === "保留") {
+    return log.holdReason ? `${log.holdReason}のため保留中` : "保留中";
+  }
+  if (decision === "辞退") {
+    if (stage === "カジュアル面談後辞退") return "カジュアル面談後、応募は見送り";
+    if (stage === "書類提出前辞退") return "書類提出前に応募辞退";
+    if (stage === "書類選考中辞退") return "書類選考中に応募辞退";
+    if (stage === "内定辞退") return "内定辞退";
+    if (stage.includes("面接前")) return "面接前辞退";
+    if (stage.includes("面接後")) return "面接後辞退";
+    return "応募辞退";
+  }
+  if (decision === "NG") {
+    if (stage.includes("書類")) return "書類NG";
+    if (stage.includes("1次") || stage.includes("一次")) return "1次面接NG";
+    if (stage.includes("2次") || stage.includes("二次")) return "2次面接NG";
+    if (stage.includes("最終")) return "最終面接NG";
+    return stage || "NG";
+  }
+  if (stage) return stage;
+  if (decision === "結果待ち" && phase) return `${phase}結果待ち`;
+  if (decision === "進行中" && phase) return `${phase}進行中`;
+  return decision || phase || "";
+}
+
+function exportMaynaviSelectionStatusCsv(logs) {
+  const headers = [
+    "企業名",
+    "職種・応募ポジション",
+    "応募経路",
+    "媒体",
+    "現在の状況",
+    "選考フェーズ",
+    "結果・判断",
+    "面談・面接日",
+    "次回予定日",
+    "辞退理由",
+    "見送り理由",
+    "保留理由",
+    "補足メモ",
+  ];
+  const rows = logs.map(log => ({
+    "企業名": log.company || "",
+    "職種・応募ポジション": log.jobPosition || "",
+    "応募経路": normalizeExternalRoute(log.route, log.agent),
+    "媒体": log.media || "",
+    "現在の状況": buildMaynaviStatusText(log),
+    "選考フェーズ": log.selectionPhase || inferSelectionPhase(log.stage),
+    "結果・判断": log.resultDecision || inferResultDecision(log.stage),
+    "面談・面接日": log.interviewDate || "",
+    "次回予定日": getNextDate(log),
+    "辞退理由": log.withdrawalReason || "",
+    "見送り理由": log.rejectionReason || log.dismissalReason || "",
+    "保留理由": log.holdReason || "",
+    "補足メモ": log.statusNote || "",
+  }));
+  downloadCsvWithBom(buildCsv(headers, rows), `maynavi-selection-status-${todayStamp()}.csv`);
 }
 
 function exportSelectionProgressExternalCsv(logs) {
@@ -329,7 +398,7 @@ const STORAGE_KEY = "job_logs_v3";
 
 // ── 応募経路 ─────────────────────────────────────────────────────────
 // 新しい経路を追加するときはここに文字列を1つ追加するだけ
-const ROUTES = ["エージェント","直接応募","LinkedIn","リファラル","その他"];
+const ROUTES = ["自分で応募","直接応募","直接スカウト","LAPRAS","Findy","Green","BizReach","他エージェント経由","マイナビ経由","エージェント","LinkedIn","リファラル","その他"];
 
 // ── お見送り理由 ──────────────────────────────────────────────────────
 // 新しい理由を追加するときはここに文字列を1つ追加するだけ
@@ -339,9 +408,17 @@ const DISMISSAL_REASONS = ["スキル不足","カルチャーフィット","ポ�
 const HOLD_CATEGORIES = ["自分都合","企業側都合","情報不足","他社比較中","条件確認中"];
 const HOLD_STAGE_ALIASES = ["保留中","一旦保留","いったん保留","hold","on hold","pending"];
 const HOLD_STAGE = "保留";
-const CLOSED_STAGES = ["内定","お見送り","辞退"];
+const CLOSED_STAGES = ["承諾","書類NG","1次面接NG","2次面接NG","最終面接NG","カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","求人クローズ","連絡終了","その他終了","お見送り","辞退"];
 const isHoldStage = (stage) => stage === HOLD_STAGE;
-const isActiveStage = (stage) => !CLOSED_STAGES.includes(stage) && !isHoldStage(stage);
+const isActiveStage = (stage) => stage !== "内定" && !CLOSED_STAGES.includes(stage) && !isHoldStage(stage);
+const isClosedStage = (stage) => CLOSED_STAGES.includes(stage);
+
+const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","1次面接","2次面接","最終面接","オファー面談","内定","終了"];
+const RESULT_DECISIONS = ["進行中","結果待ち","通過","NG","辞退","保留","終了"];
+const STATUS_CATEGORY_FILTERS = ["すべて","進行中","保留中","終了済み"];
+const WITHDRAWAL_STAGES = ["カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","辞退"];
+const REJECTION_STAGES = ["書類NG","1次面接NG","2次面接NG","最終面接NG","お見送り"];
+const CLOSED_REASON_STAGES = ["求人クローズ","連絡終了","その他終了"];
 
 // ── 選考フェーズ & タイムライン種別 ─────────────────────────────────
 // 【拡張方法】新しいフェーズ/イベント種別を追加するときは
@@ -352,14 +429,39 @@ const isActiveStage = (stage) => !CLOSED_STAGES.includes(stage) && !isHoldStage(
 //   isStage: false → タイムライン記録専用（フェーズ扱いしない）
 const TYPE_DEFS = [
   { key:"応募",           isStage:false, bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
+  { key:"未応募",         isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
   { key:"応募中",         isStage:true,  bg:"bg-sky-50",      text:"text-sky-700",     dot:"bg-sky-500",     btn:"border-sky-400 bg-sky-50 text-sky-800"          },
+  { key:"カジュアル面談予定", isStage:true, bg:"bg-gray-100", text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"       },
+  { key:"カジュアル面談済み", isStage:true, bg:"bg-gray-100", text:"text-gray-700",    dot:"bg-gray-500",    btn:"border-gray-400 bg-gray-100 text-gray-800"       },
   { key:"カジュアル面談", isStage:true,  bg:"bg-gray-100",    text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"       },
   { key:"書類選考中",     isStage:true,  bg:"bg-blue-50",     text:"text-blue-600",    dot:"bg-blue-400",    btn:"border-blue-400 bg-blue-50 text-blue-700"        },
+  { key:"書類結果待ち",   isStage:true,  bg:"bg-blue-50",     text:"text-blue-700",    dot:"bg-blue-500",    btn:"border-blue-500 bg-blue-50 text-blue-800"        },
+  { key:"1次面接予定",    isStage:true,  bg:"bg-blue-100",    text:"text-blue-700",    dot:"bg-blue-500",    btn:"border-blue-500 bg-blue-100 text-blue-800"       },
+  { key:"1次面接結果待ち", isStage:true, bg:"bg-blue-100",    text:"text-blue-800",    dot:"bg-blue-600",    btn:"border-blue-600 bg-blue-100 text-blue-900"       },
   { key:"一次面接",       isStage:true,  bg:"bg-blue-100",    text:"text-blue-700",    dot:"bg-blue-500",    btn:"border-blue-500 bg-blue-100 text-blue-800"       },
+  { key:"2次面接予定",    isStage:true,  bg:"bg-purple-50",   text:"text-purple-700",  dot:"bg-purple-500",  btn:"border-purple-400 bg-purple-50 text-purple-800"  },
+  { key:"2次面接結果待ち", isStage:true, bg:"bg-purple-100",  text:"text-purple-800",  dot:"bg-purple-600",  btn:"border-purple-500 bg-purple-100 text-purple-900" },
   { key:"二次面接",       isStage:true,  bg:"bg-purple-50",   text:"text-purple-700",  dot:"bg-purple-500",  btn:"border-purple-400 bg-purple-50 text-purple-800"  },
+  { key:"最終面接予定",   isStage:true,  bg:"bg-orange-50",   text:"text-orange-700",  dot:"bg-orange-400",  btn:"border-orange-400 bg-orange-50 text-orange-800"  },
+  { key:"最終面接結果待ち", isStage:true, bg:"bg-orange-100", text:"text-orange-800",  dot:"bg-orange-500",  btn:"border-orange-500 bg-orange-100 text-orange-900" },
   { key:"最終面接",       isStage:true,  bg:"bg-orange-50",   text:"text-orange-700",  dot:"bg-orange-400",  btn:"border-orange-400 bg-orange-50 text-orange-800"  },
+  { key:"オファー面談予定", isStage:true, bg:"bg-emerald-50", text:"text-emerald-700", dot:"bg-emerald-400", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
   { key:"保留",           isStage:true,  bg:"bg-amber-50",    text:"text-amber-700",   dot:"bg-amber-400",   btn:"border-amber-400 bg-amber-50 text-amber-800"     },
   { key:"内定",           isStage:true,  bg:"bg-emerald-50",  text:"text-emerald-700", dot:"bg-emerald-500", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
+  { key:"承諾",           isStage:true,  bg:"bg-emerald-100", text:"text-emerald-800", dot:"bg-emerald-600", btn:"border-emerald-500 bg-emerald-100 text-emerald-900" },
+  { key:"書類NG",         isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"1次面接NG",      isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"2次面接NG",      isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"最終面接NG",     isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"カジュアル面談後辞退", isStage:true, bg:"bg-stone-100", text:"text-stone-600", dot:"bg-stone-400", btn:"border-stone-300 bg-stone-100 text-stone-700" },
+  { key:"書類提出前辞退", isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
+  { key:"書類選考中辞退", isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
+  { key:"面接前辞退",     isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
+  { key:"面接後辞退",     isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
+  { key:"内定辞退",       isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
+  { key:"求人クローズ",   isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"連絡終了",       isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
+  { key:"その他終了",     isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
   { key:"お見送り",       isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
   { key:"辞退",           isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
   { key:"その他メモ",     isStage:false, bg:"bg-slate-100",   text:"text-slate-500",   dot:"bg-slate-300",   btn:"border-slate-200 bg-slate-50 text-slate-500"     },
@@ -468,6 +570,12 @@ const LOG_DEFAULTS = {
   agent:          "",
   media:          "",
   stage:          "書類選考中",
+  jobPosition:    "",
+  selectionPhase: "",
+  resultDecision: "",
+  withdrawalReason:"",
+  rejectionReason:"",
+  statusNote:     "",
   priority:       "",
   ...COMPANY_DECISION_DEFAULTS,
   holdReason:     "",
@@ -502,13 +610,60 @@ const normalizeStage = (stage) => {
   return HOLD_STAGE_ALIASES.some(alias => alias.toLowerCase() === value.toLowerCase()) ? HOLD_STAGE : value;
 };
 
+function inferSelectionPhase(stage) {
+  if (!stage) return "";
+  if (stage.includes("カジュアル")) return "カジュアル面談";
+  if (stage.includes("書類")) return "書類選考";
+  if (stage.includes("1次") || stage.includes("一次")) return "1次面接";
+  if (stage.includes("2次") || stage.includes("二次")) return "2次面接";
+  if (stage.includes("最終")) return "最終面接";
+  if (stage.includes("オファー")) return "オファー面談";
+  if (stage.includes("内定") || stage === "承諾") return "内定";
+  if (isClosedStage(stage) || stage.includes("終了") || stage.includes("辞退") || stage.includes("NG")) return "終了";
+  if (stage === "未応募") return "未応募";
+  return "";
+}
+
+function inferResultDecision(stage) {
+  if (!stage) return "";
+  if (isHoldStage(stage)) return "保留";
+  if (REJECTION_STAGES.includes(stage) || stage.includes("NG")) return "NG";
+  if (WITHDRAWAL_STAGES.includes(stage) || stage.includes("辞退")) return "辞退";
+  if (stage === "承諾" || CLOSED_REASON_STAGES.includes(stage)) return "終了";
+  if (stage.includes("結果待ち")) return "結果待ち";
+  if (stage === "内定") return "通過";
+  return "進行中";
+}
+
+function normalizeExternalRoute(route, agent) {
+  if (route === "直接応募") return "自分で応募";
+  if (route === "エージェント") return agent && agent.includes("マイナビ") ? "マイナビ経由" : "他エージェント経由";
+  return route || "";
+}
+
+function getStatusCategory(log) {
+  const stage = log.stage || "";
+  const decision = log.resultDecision || inferResultDecision(stage);
+  if (decision === "保留" || isHoldStage(stage)) return "保留中";
+  if (decision === "NG" || decision === "辞退" || decision === "終了" || isClosedStage(stage)) return "終了済み";
+  return "進行中";
+}
+
 const normalizeLog = (log) => {
   const normalizedStage = normalizeStage(log.stage ?? log.status);
   const holdReason = log.holdReason ?? log.pendingReason ?? log.pauseReason ?? "";
+  const rejectionReason = log.rejectionReason ?? log.dismissalReason ?? "";
   return {
     ...LOG_DEFAULTS,
     ...log,
     stage: normalizedStage,
+    jobPosition: log.jobPosition ?? log.position ?? log.role ?? "",
+    route: normalizeExternalRoute(log.route, log.agent),
+    selectionPhase: SELECTION_PHASES.includes(log.selectionPhase) ? log.selectionPhase : inferSelectionPhase(normalizedStage),
+    resultDecision: RESULT_DECISIONS.includes(log.resultDecision) ? log.resultDecision : inferResultDecision(normalizedStage),
+    withdrawalReason: log.withdrawalReason ?? "",
+    rejectionReason,
+    statusNote: log.statusNote ?? log.externalNote ?? "",
     holdReason,
     holdDate: log.holdDate ?? log.pendingDate ?? log.pausedAt ?? "",
     holdReviewDate: log.holdReviewDate ?? log.reviewDate ?? log.nextReviewDate ?? "",
@@ -776,7 +931,7 @@ function inCls(err) {
 }
 
 function routeLabel(log) {
-  if (log.route==="エージェント" && log.agent) return `${log.route} · ${log.agent}`;
+  if (["エージェント","他エージェント経由","マイナビ経由"].includes(log.route) && log.agent) return `${log.route} · ${log.agent}`;
   if (log.route==="その他"       && log.media) return `その他 (${log.media})`;
   return log.route;
 }
@@ -1097,6 +1252,11 @@ function DataManagementPanel({ logs }) {
           <Ic n="Download" size={13}/>外部共有用CSVをダウンロード
         </button>
         <button
+          onClick={() => exportMaynaviSelectionStatusCsv(logs)}
+          className="flex items-center justify-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors">
+          <Ic n="Download" size={13}/>マイナビ共有用CSVをダウンロード
+        </button>
+        <button
           onClick={() => exportSelectionProgressBackupCsv(logs)}
           className="flex items-center justify-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
           <Ic n="Download" size={13}/>内部バックアップCSVをダウンロード
@@ -1118,6 +1278,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
   const [search,          setSearch]          = useState("");
   const [filterStage,     setFilterStage]     = useState("すべて");
   const [filterPriority,  setFilterPriority]  = useState("すべて");
+  const [filterStatusCategory, setFilterStatusCategory] = useState("すべて");
   const fileInputRef = React.useRef(null);
 
   const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
@@ -1147,18 +1308,19 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
 
   const filtered = logs.filter(l => {
     const q = search.toLowerCase();
-    const ms = !q || [l.company, l.stage, l.route, l.agent, l.media, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
+    const ms = !q || [l.company, l.jobPosition, l.stage, l.route, l.agent, l.media, l.selectionPhase, l.resultDecision, l.statusNote, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
     const mf = filterStage==="すべて" || l.stage===filterStage;
     const mp = filterPriority==="すべて" || l.priority===filterPriority;
-    return ms && mf && mp;
+    const mc = filterStatusCategory==="すべて" || getStatusCategory(l)===filterStatusCategory;
+    return ms && mf && mp && mc;
   });
 
   const stats = [
-    { label:"応募中",   count:logs.filter(l=>isActiveStage(l.stage)).length,      color:"text-blue-600",    bg:"bg-blue-50 border-blue-100"       },
-    { label:"保留",     count:logs.filter(l=>l.stage===HOLD_STAGE).length,        color:"text-amber-600",   bg:"bg-amber-50 border-amber-100"     },
+    { label:"進行中",   count:logs.filter(l=>isActiveStage(l.stage)).length, color:"text-blue-600", bg:"bg-blue-50 border-blue-100"       },
+    { label:"保留",     count:logs.filter(l=>getStatusCategory(l)==="保留中").length, color:"text-amber-600", bg:"bg-amber-50 border-amber-100"     },
     { label:"内定",     count:logs.filter(l=>l.stage==="内定").length,            color:"text-emerald-600", bg:"bg-emerald-50 border-emerald-100" },
-    { label:"お見送り", count:logs.filter(l=>l.stage==="お見送り").length,        color:"text-red-500",     bg:"bg-red-50 border-red-100"         },
-    { label:"辞退",     count:logs.filter(l=>l.stage==="辞退").length,            color:"text-stone-600",   bg:"bg-stone-100 border-stone-200"    },
+    { label:"NG",       count:logs.filter(l=>(l.resultDecision || inferResultDecision(l.stage))==="NG").length, color:"text-red-500", bg:"bg-red-50 border-red-100" },
+    { label:"終了済み", count:logs.filter(l=>getStatusCategory(l)==="終了済み").length, color:"text-stone-600", bg:"bg-stone-100 border-stone-200" },
   ];
 
   return (
@@ -1239,6 +1401,16 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
               ))}
             </div>
 
+            {/* 状態カテゴリフィルター */}
+            <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
+              {STATUS_CATEGORY_FILTERS.map(c=>(
+                <button key={c} onClick={()=>setFilterStatusCategory(c)}
+                  className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
+                    filterStatusCategory===c ? "bg-slate-700 text-white border-slate-700" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
+                  }`}>{c==="すべて" ? "状態: すべて" : c}</button>
+              ))}
+            </div>
+
             {/* 優先度フィルター */}
             <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
               {["すべて",...PRIORITIES].map(p=>{
@@ -1264,8 +1436,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                   <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <Ic n="Building" size={30} cls="text-gray-300"/>
                   </div>
-                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて"||filterPriority!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
-                  {!search && filterStage==="すべて" && filterPriority==="すべて" && (
+                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて"||filterPriority!=="すべて"||filterStatusCategory!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
+                  {!search && filterStage==="すべて" && filterPriority==="すべて" && filterStatusCategory==="すべて" && (
                     <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">最初の企業を追加する →</button>
                   )}
                 </div>
@@ -1283,6 +1455,9 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
 
                   {/* メタ情報 */}
                   <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-gray-500">
+                    {log.jobPosition && (
+                      <span className="flex items-center gap-1.5"><Ic n="Briefcase" size={13} cls="text-gray-400"/>{log.jobPosition}</span>
+                    )}
                     {getNextDate(log) && (
                       <span className="flex items-center gap-1.5"><Ic n="Calendar" size={13} cls="text-gray-400"/>{getNextDate(log)}</span>
                     )}
@@ -1293,6 +1468,15 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                     {(log.events||[]).length>0 && (
                       <span className="flex items-center gap-1.5"><Ic n="History" size={13} cls="text-gray-400"/>{log.events.length}件の記録</span>
                     )}
+                  </div>
+
+                  <div className="mt-2 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
+                      <span className="font-semibold text-gray-700">{buildMaynaviStatusText(log)}</span>
+                      {(log.selectionPhase || inferSelectionPhase(log.stage)) && <span>フェーズ: {log.selectionPhase || inferSelectionPhase(log.stage)}</span>}
+                      {(log.resultDecision || inferResultDecision(log.stage)) && <span>判断: {log.resultDecision || inferResultDecision(log.stage)}</span>}
+                    </div>
+                    {log.statusNote && <p className="mt-1 text-xs text-gray-500 line-clamp-2 whitespace-pre-wrap">{log.statusNote}</p>}
                   </div>
 
                   {/* お見送り理由 */}
@@ -2201,6 +2385,8 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
     const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s;
   });
   const events = [...(log.events||[])].sort((a,b)=>a.date.localeCompare(b.date));
+  const updateStatus = (patch) => onUpdate(log.id, patch);
+  const currentDecision = log.resultDecision || inferResultDecision(log.stage);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -2251,6 +2437,73 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
               <option value="">未設定</option>
               {PRIORITIES.map(p=><option key={p} value={p}>{p}</option>)}
             </select>
+          </div>
+          <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+              <Ic n="Briefcase" size={13}/>共有用ステータス
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <FormField label="職種・応募ポジション">
+                <input
+                  type="text"
+                  value={log.jobPosition || ""}
+                  onChange={e => updateStatus({ jobPosition:e.target.value })}
+                  placeholder="例）フロントエンドエンジニア"
+                  className={inCls()}
+                />
+              </FormField>
+              <FormField label="応募経路">
+                <select value={log.route || ""} onChange={e => updateStatus({ route:e.target.value })} className={inCls()}>
+                  <option value="">未設定</option>
+                  {ROUTES.map(r=><option key={r} value={r}>{r}</option>)}
+                </select>
+              </FormField>
+              <FormField label="選考フェーズ">
+                <select value={log.selectionPhase || ""} onChange={e => updateStatus({ selectionPhase:e.target.value })} className={inCls()}>
+                  <option value="">未設定</option>
+                  {SELECTION_PHASES.map(p=><option key={p} value={p}>{p}</option>)}
+                </select>
+              </FormField>
+              <FormField label="結果・判断">
+                <select value={currentDecision || ""} onChange={e => updateStatus({ resultDecision:e.target.value, stage:e.target.value==="保留" ? HOLD_STAGE : log.stage })} className={inCls()}>
+                  <option value="">未設定</option>
+                  {RESULT_DECISIONS.map(d=><option key={d} value={d}>{d}</option>)}
+                </select>
+              </FormField>
+            </div>
+            <FormField label="現在の状況">
+              <select value={log.stage || ""} onChange={e => updateStatus({ stage:e.target.value, selectionPhase:inferSelectionPhase(e.target.value), resultDecision:inferResultDecision(e.target.value) })} className={inCls()}>
+                {STAGES.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </FormField>
+            {currentDecision==="辞退" && (
+              <div className="fade-in">
+                <FormField label="辞退理由">
+                  <textarea value={log.withdrawalReason || ""} onChange={e => updateStatus({ withdrawalReason:e.target.value })}
+                    rows={3} className={inCls()+" resize-y"} placeholder="辞退理由を入力..." />
+                </FormField>
+              </div>
+            )}
+            {currentDecision==="NG" && (
+              <div className="fade-in">
+                <FormField label="見送り理由">
+                  <textarea value={log.rejectionReason || ""} onChange={e => updateStatus({ rejectionReason:e.target.value })}
+                    rows={3} className={inCls()+" resize-y"} placeholder="見送り理由を入力..." />
+                </FormField>
+              </div>
+            )}
+            {currentDecision==="保留" && (
+              <div className="fade-in">
+                <FormField label="保留理由">
+                  <textarea value={log.holdReason || ""} onChange={e => updateStatus({ holdReason:e.target.value, stage:log.stage || HOLD_STAGE })}
+                    rows={3} className={inCls()+" resize-y"} placeholder="保留理由を入力..." />
+                </FormField>
+              </div>
+            )}
+            <FormField label="補足メモ">
+              <textarea value={log.statusNote || ""} onChange={e => updateStatus({ statusNote:e.target.value })}
+                rows={3} className={inCls()+" resize-y"} placeholder="外部共有時に添える補足..." />
+            </FormField>
           </div>
           <button
             onClick={onOpenCriteria}
@@ -2712,7 +2965,7 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
     onSave(form);
   };
 
-  const showAgent     = form.route==="エージェント";
+  const showAgent     = ["エージェント","他エージェント経由","マイナビ経由"].includes(form.route);
   const showMedia     = form.route==="その他";
   const showDismissal = form.stage==="お見送り";
   const showHold      = form.stage===HOLD_STAGE;
