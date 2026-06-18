@@ -565,7 +565,32 @@ const INIT = [
 // 【拡張方法】新フィールドを log スキーマに追加したときは
 //   LOG_DEFAULTS にデフォルト値を追加しておくこと。
 //   既存データの読み込み時に自動で補完される。
-const LOG_DEFAULTS = {
+const createId = (prefix = "log") =>
+  (window.crypto && window.crypto.randomUUID)
+    ? window.crypto.randomUUID()
+    : `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+const cloneData = (value) => {
+  if (Array.isArray(value)) return value.map(cloneData);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cloneData(v)]));
+  }
+  return value;
+};
+
+function normalizeEventsWithUniqueIds(events) {
+  const seen = new Set();
+  return (Array.isArray(events) ? events : []).map(ev => {
+    const next = cloneData(ev || {});
+    if (!next.id || seen.has(next.id)) {
+      next.id = createId("event");
+    }
+    seen.add(next.id);
+    return next;
+  });
+}
+
+const createLogDefaults = () => ({
   route:          "直接応募",
   agent:          "",
   media:          "",
@@ -588,7 +613,8 @@ const LOG_DEFAULTS = {
   interviewer:    "",
   memo:           "",
   events:         [],
-};
+});
+const LOG_DEFAULTS = createLogDefaults();
 
 const defaultDetails = () => ({ jobDescription:"", companyUrl:"", attachments:[], files:[] });
 
@@ -601,9 +627,10 @@ const UNDERSTANDING_SECTIONS = [
   { key:"自分との接点", label:"自分との接点",   bgLight:"bg-teal-50",   border:"border-teal-200",   text:"text-teal-700",   tagBg:"bg-teal-100",   tagText:"text-teal-700"   },
   { key:"やりたいこと", label:"やりたいこと",   bgLight:"bg-red-50",    border:"border-red-200",    text:"text-red-700",    tagBg:"bg-red-100",    tagText:"text-red-700"    },
 ];
-const DEFAULT_UND_SECTION = { summary:"", points:[""], tags:[], highlights:[] };
+const defaultUnderstandingSection = () => ({ summary:"", points:[""], tags:[], highlights:[] });
+const DEFAULT_UND_SECTION = defaultUnderstandingSection();
 const defaultUnderstanding = () =>
-  Object.fromEntries(UNDERSTANDING_SECTIONS.map(s => [s.key, { ...DEFAULT_UND_SECTION, points:[""] }]));
+  Object.fromEntries(UNDERSTANDING_SECTIONS.map(s => [s.key, defaultUnderstandingSection()]));
 
 const normalizeStage = (stage) => {
   const value = String(stage || LOG_DEFAULTS.stage).trim();
@@ -650,35 +677,50 @@ function getStatusCategory(log) {
 }
 
 const normalizeLog = (log) => {
-  const normalizedStage = normalizeStage(log.stage ?? log.status);
-  const holdReason = log.holdReason ?? log.pendingReason ?? log.pauseReason ?? "";
-  const rejectionReason = log.rejectionReason ?? log.dismissalReason ?? "";
+  const source = log || {};
+  const normalizedStage = normalizeStage(source.stage ?? source.status);
+  const holdReason = source.holdReason ?? source.pendingReason ?? source.pauseReason ?? "";
+  const rejectionReason = source.rejectionReason ?? source.dismissalReason ?? "";
   return {
-    ...LOG_DEFAULTS,
-    ...log,
+    ...createLogDefaults(),
+    ...cloneData(source),
+    id: source.id || createId(),
     stage: normalizedStage,
-    jobPosition: log.jobPosition ?? log.position ?? log.role ?? "",
-    route: normalizeExternalRoute(log.route, log.agent),
-    selectionPhase: SELECTION_PHASES.includes(log.selectionPhase) ? log.selectionPhase : inferSelectionPhase(normalizedStage),
-    resultDecision: RESULT_DECISIONS.includes(log.resultDecision) ? log.resultDecision : inferResultDecision(normalizedStage),
-    withdrawalReason: log.withdrawalReason ?? "",
+    jobPosition: source.jobPosition ?? source.position ?? source.role ?? "",
+    route: normalizeExternalRoute(source.route, source.agent),
+    selectionPhase: SELECTION_PHASES.includes(source.selectionPhase) ? source.selectionPhase : inferSelectionPhase(normalizedStage),
+    resultDecision: RESULT_DECISIONS.includes(source.resultDecision) ? source.resultDecision : inferResultDecision(normalizedStage),
+    withdrawalReason: source.withdrawalReason ?? "",
     rejectionReason,
-    statusNote: log.statusNote ?? log.externalNote ?? "",
+    statusNote: source.statusNote ?? source.externalNote ?? "",
     holdReason,
-    holdDate: log.holdDate ?? log.pendingDate ?? log.pausedAt ?? "",
-    holdReviewDate: log.holdReviewDate ?? log.reviewDate ?? log.nextReviewDate ?? "",
-    holdCategory: HOLD_CATEGORIES.includes(log.holdCategory) ? log.holdCategory : "",
-    details: log.details
+    holdDate: source.holdDate ?? source.pendingDate ?? source.pausedAt ?? "",
+    holdReviewDate: source.holdReviewDate ?? source.reviewDate ?? source.nextReviewDate ?? "",
+    holdCategory: HOLD_CATEGORIES.includes(source.holdCategory) ? source.holdCategory : "",
+    details: source.details
       ? {
           ...defaultDetails(),
-          ...log.details,
-          attachments: Array.isArray(log.details.attachments) ? log.details.attachments : [],
-          files: Array.isArray(log.details.files) ? log.details.files : [],
+          ...cloneData(source.details),
+          attachments: Array.isArray(source.details.attachments) ? source.details.attachments.map(cloneData) : [],
+          files: Array.isArray(source.details.files) ? source.details.files.map(cloneData) : [],
         }
       : defaultDetails(),
-    companyUnderstanding: log.companyUnderstanding || null,
+    events: normalizeEventsWithUniqueIds(source.events),
+    companyUnderstanding: source.companyUnderstanding ? cloneData(source.companyUnderstanding) : null,
   };
 };
+
+function normalizeLogsWithUniqueIds(items) {
+  const seen = new Set();
+  return (Array.isArray(items) ? items : []).map(item => {
+    const log = normalizeLog(item);
+    if (!log.id || seen.has(log.id)) {
+      log.id = createId();
+    }
+    seen.add(log.id);
+    return log;
+  });
+}
 
 // ══════════════════════════════════════════════════════════════════
 // LocalStorage フック
@@ -688,14 +730,14 @@ function useLogs() {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
       const raw = s ? JSON.parse(s) : INIT;
-      return raw.map(normalizeLog);
+      return normalizeLogsWithUniqueIds(raw);
     }
-    catch { return INIT.map(normalizeLog); }
+    catch { return normalizeLogsWithUniqueIds(INIT); }
   });
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(logs)); }, [logs]);
 
   const addLog = (data) => {
-    const id = Date.now().toString();
+    const id = createId();
     const initEvent = data.applicationDate
       ? [{ id:`${id}_e0`, date:data.applicationDate, type:"応募", memo:data.applicationMemo||"" }]
       : [];
@@ -705,11 +747,18 @@ function useLogs() {
     setLogs(p => [log, ...p]);
   };
 
-  const updateLog = (id, data) => setLogs(p => p.map(l => l.id===id ? normalizeLog({...l,...data,updatedAt:new Date().toISOString()}) : l));
+  const updateLog = (id, data) => setLogs(p => {
+    let updated = false;
+    return p.map(l => {
+      if (updated || l.id !== id) return l;
+      updated = true;
+      return normalizeLog({...l, ...cloneData(data), updatedAt:new Date().toISOString()});
+    });
+  });
   const deleteLog = (id) => setLogs(p => p.filter(l => l.id!==id));
 
   const addEvent = (logId, ev) => {
-    const evId = Date.now().toString();
+    const evId = createId("event");
     setLogs(p => p.map(l => {
       if (l.id !== logId) return l;
       const newEv = { ...ev, id:evId };
@@ -2194,7 +2243,7 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
             className="text-xs text-blue-600 hover:underline">通常表示に戻る</button>
         </div>
         {UNDERSTANDING_SECTIONS.map(s => {
-          const sec = data[s.key] || DEFAULT_UND_SECTION;
+          const sec = data[s.key] || defaultUnderstandingSection();
           const hl  = (sec.highlights || []).map(i => sec.points[i]).filter(Boolean);
           const pts = (hl.length > 0 ? hl : (sec.points || []).slice(0, 2)).filter(Boolean);
           if (!sec.summary && pts.length === 0) return null;
@@ -2272,7 +2321,7 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
 
       {/* セクションカード */}
       {UNDERSTANDING_SECTIONS.map(s => {
-        const sec        = data[s.key] || { ...DEFAULT_UND_SECTION, points:[""] };
+        const sec        = data[s.key] || defaultUnderstandingSection();
         const isCollapsed = collapsed[s.key];
         const tagsStr    = (sec.tags || []).join(" ");
 
@@ -2925,13 +2974,13 @@ function EditEventForm({ event, onSave, onCancel }) {
 // ══════════════════════════════════════════════════════════════════
 // 企業フォーム画面（新規追加 / 編集）
 // ══════════════════════════════════════════════════════════════════
-// LOG_DEFAULTS から生成することで、新フィールド追加時に EMPTY_FORM への手動追加を不要にする
-const EMPTY_FORM = {
+// LOG_DEFAULTS から生成することで、新フィールド追加時に空フォームへの手動追加を不要にする
+const emptyForm = () => ({
   company:"",
-  ...LOG_DEFAULTS,
+  ...createLogDefaults(),
   applicationDate: new Date().toISOString().split("T")[0],
   applicationMemo:"",
-};
+});
 
 function CompanyForm({ initial, onBack, onSave, onDelete }) {
   const isEdit = !!initial;
@@ -2939,10 +2988,10 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
     // LOG_DEFAULTS でフォールバックを確保しつつ既存値を上書き。
     // 新フィールドを LOG_DEFAULTS に追加すれば編集フォームにも自動反映。
     company: initial.company || "",
-    ...LOG_DEFAULTS,
-    ...Object.fromEntries(Object.keys(LOG_DEFAULTS).map(k => [k, initial[k] ?? LOG_DEFAULTS[k]])),
+    ...createLogDefaults(),
+    ...Object.fromEntries(Object.keys(LOG_DEFAULTS).map(k => [k, cloneData(initial[k] ?? LOG_DEFAULTS[k])])),
     applicationDate:"", applicationMemo:"",
-  } : {...EMPTY_FORM});
+  } : emptyForm());
   const [errors, setErrors] = useState({});
   const [showDel, setShowDel] = useState(false);
 
@@ -2962,7 +3011,12 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
   };
   const handleSave = () => {
     const e=validate(); if(Object.keys(e).length){ setErrors(e); return; }
-    onSave(form);
+    if (isEdit) {
+      const { id, events, details, companyUnderstanding, createdAt, updatedAt, applicationDate, applicationMemo, ...editable } = form;
+      onSave(editable);
+    } else {
+      onSave(form);
+    }
   };
 
   const showAgent     = ["エージェント","他エージェント経由","マイナビ経由"].includes(form.route);
@@ -3188,13 +3242,19 @@ function App() {
   const backFromCriteria = () => setScreen(selected ? "detail" : "list");
 
   const handleImport = (data, replace) => {
-    const normalized = data.map(normalizeLog);
     if (replace) {
-      setLogs(normalized);
+      setLogs(normalizeLogsWithUniqueIds(data));
     } else {
       setLogs(prev => {
-        const existingIds = new Set(prev.map(l => l.id));
-        const newItems = normalized.filter(l => !existingIds.has(l.id));
+        const usedIds = new Set(prev.map(l => l.id));
+        const newItems = data.map(item => {
+          const log = normalizeLog(item);
+          if (!log.id || usedIds.has(log.id)) {
+            log.id = createId();
+          }
+          usedIds.add(log.id);
+          return log;
+        });
         return [...prev, ...newItems];
       });
     }
