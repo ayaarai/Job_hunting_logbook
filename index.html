@@ -152,7 +152,7 @@ function buildSelectionProgress(logs) {
   return logs.map(log => ({
     id: log.id,
     company: log.company,
-    route: log.route,
+    route: normalizeRoute(log.route),
     agent: log.agent,
     media: log.media,
     status: log.stage,
@@ -280,7 +280,7 @@ function exportMaynaviSelectionStatusCsv(logs) {
   const rows = logs.map(log => ({
     "企業名": log.company || "",
     "職種・応募ポジション": log.jobPosition || "",
-    "応募経路": normalizeExternalRoute(log.route, log.agent),
+    "応募経路": normalizeExternalRoute(log.route),
     "媒体": log.media || "",
     "現在の状況": buildMaynaviStatusText(log),
     "選考フェーズ": log.selectionPhase || inferSelectionPhase(log.stage),
@@ -317,7 +317,7 @@ function exportSelectionProgressExternalCsv(logs) {
     "企業名": log.company || "",
     "現在の状況": log.stage || "",
     "志望度・優先度": log.priority || "",
-    "応募経路": log.route || "",
+    "応募経路": normalizeExternalRoute(log.route),
     "媒体": log.media || "",
     "担当エージェント": log.agent || "",
     "転職軸との一致度": log.axisMatch || "",
@@ -398,7 +398,7 @@ const STORAGE_KEY = "job_logs_v3";
 
 // ── 応募経路 ─────────────────────────────────────────────────────────
 // 新しい経路を追加するときはここに文字列を1つ追加するだけ
-const ROUTES = ["自分で応募","直接応募","直接スカウト","LAPRAS","Findy","Green","BizReach","他エージェント経由","マイナビ経由","エージェント","LinkedIn","リファラル","その他"];
+const ROUTES = ["直接応募","直接スカウト","LAPRAS","Findy","Green","BizReach","エージェント経由","LinkedIn","リファラル","その他"];
 
 // ── お見送り理由 ──────────────────────────────────────────────────────
 // 新しい理由を追加するときはここに文字列を1つ追加するだけ
@@ -414,11 +414,14 @@ const isActiveStage = (stage) => stage !== "内定" && !CLOSED_STAGES.includes(s
 const isClosedStage = (stage) => CLOSED_STAGES.includes(stage);
 
 const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","1次面接","2次面接","最終面接","オファー面談","内定","終了"];
-const RESULT_DECISIONS = ["進行中","結果待ち","通過","NG","辞退","保留","終了"];
+const RESULT_DECISIONS = ["進行中","予定","結果待ち","通過","NG","辞退","保留","終了"];
 const STATUS_CATEGORY_FILTERS = ["すべて","進行中","保留中","終了済み"];
 const WITHDRAWAL_STAGES = ["カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","辞退"];
 const REJECTION_STAGES = ["書類NG","1次面接NG","2次面接NG","最終面接NG","お見送り"];
 const CLOSED_REASON_STAGES = ["求人クローズ","連絡終了","その他終了"];
+const INTERVIEW_NOTIFICATION_PHASES = ["カジュアル面談","1次面接","2次面接","最終面接","オファー面談"];
+const ACTIVE_INTERVIEW_DECISIONS = ["進行中","予定","結果待ち"];
+const INTERVIEW_NOTIFICATION_EXCLUDED_STAGES = ["書類選考中","書類結果待ち","未応募","応募中","保留","書類NG","1次面接NG","2次面接NG","最終面接NG","辞退","終了","求人クローズ","連絡終了"];
 
 // ── 選考フェーズ & タイムライン種別 ─────────────────────────────────
 // 【拡張方法】新しいフェーズ/イベント種別を追加するときは
@@ -504,7 +507,7 @@ const COMPANY_DECISION_DEFAULTS = {
 const INIT = [
   {
     id:"1", company:"株式会社サンプル",
-    route:"エージェント", agent:"リクルートエージェント", media:"",
+    route:"エージェント経由", agent:"リクルートエージェント", media:"",
     stage:"一次面接", priority:"高（第一志望）", dismissalReason:"", dismissalNote:"",
     interviewDate:"2026-03-20", interviewer:"田中部長",
     memo:"技術面では問題なさそう。次回はシステム設計の話らしい。",
@@ -662,10 +665,50 @@ function inferResultDecision(stage) {
   return "進行中";
 }
 
-function normalizeExternalRoute(route, agent) {
-  if (route === "直接応募") return "自分で応募";
-  if (route === "エージェント") return agent && agent.includes("マイナビ") ? "マイナビ経由" : "他エージェント経由";
+function normalizeRoute(route) {
+  if (["自分で応募", "直接応募"].includes(route)) return "直接応募";
+  if (["エージェント", "他エージェント経由", "マイナビ経由", "エージェント経由"].includes(route)) return "エージェント経由";
   return route || "";
+}
+
+function normalizeExternalRoute(route) {
+  return normalizeRoute(route);
+}
+
+function getLogSelectionPhase(log) {
+  return log.selectionPhase || inferSelectionPhase(log.stage);
+}
+
+function getLogResultDecision(log) {
+  return log.resultDecision || inferResultDecision(log.stage);
+}
+
+function getInterviewNotificationPhase(log) {
+  const phase = getLogSelectionPhase(log);
+  if (INTERVIEW_NOTIFICATION_PHASES.includes(phase)) return phase;
+  return INTERVIEW_NOTIFICATION_PHASES.includes(inferSelectionPhase(log.stage)) ? inferSelectionPhase(log.stage) : "";
+}
+
+function getInterviewNotificationDate(log) {
+  return getInterviewNotificationPhase(log) ? (log.interviewDate || "") : "";
+}
+
+function isInterviewNotificationTarget(log) {
+  const phase = getInterviewNotificationPhase(log);
+  const decision = getLogResultDecision(log);
+  const stage = log.stage || "";
+  return Boolean(
+    INTERVIEW_NOTIFICATION_PHASES.includes(phase) &&
+    getInterviewNotificationDate(log) &&
+    !INTERVIEW_NOTIFICATION_EXCLUDED_STAGES.includes(stage) &&
+    isActiveStage(stage) &&
+    !isClosedStage(stage) &&
+    ACTIVE_INTERVIEW_DECISIONS.includes(decision)
+  );
+}
+
+function interviewNotificationLabel(phase) {
+  return `${phase}通知`;
 }
 
 function getStatusCategory(log) {
@@ -687,7 +730,7 @@ const normalizeLog = (log) => {
     id: source.id || createId(),
     stage: normalizedStage,
     jobPosition: source.jobPosition ?? source.position ?? source.role ?? "",
-    route: normalizeExternalRoute(source.route, source.agent),
+    route: normalizeRoute(source.route),
     selectionPhase: SELECTION_PHASES.includes(source.selectionPhase) ? source.selectionPhase : inferSelectionPhase(normalizedStage),
     resultDecision: RESULT_DECISIONS.includes(source.resultDecision) ? source.resultDecision : inferResultDecision(normalizedStage),
     withdrawalReason: source.withdrawalReason ?? "",
@@ -814,22 +857,25 @@ function saveSeenIds(ids) {
 }
 
 function useInterviewNotifications(logs) {
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = todayStamp();
   const tomorrowStr = (() => {
     const d = new Date(); d.setDate(d.getDate() + 1);
-    return d.toISOString().split("T")[0];
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
   })();
 
   const [seenIds, setSeenIds] = useState(() => getSeenIds());
 
   const notifications = logs
-    .filter(l => isActiveStage(l.stage))
+    .filter(isInterviewNotificationTarget)
     .flatMap(l => {
-      const nextDate = getNextDate(l);
-      if (!nextDate) return [];
+      const nextDate = getInterviewNotificationDate(l);
+      const phase = getInterviewNotificationPhase(l);
       const items = [];
-      if (nextDate === todayStr)    items.push({ id:`${l.id}_today`,    company:l.company, date:nextDate, type:"today" });
-      if (nextDate === tomorrowStr) items.push({ id:`${l.id}_tomorrow`, company:l.company, date:nextDate, type:"tomorrow" });
+      if (nextDate === todayStr)    items.push({ id:`${l.id}_${phase}_today`,    company:l.company, date:nextDate, type:"today", phase, label:interviewNotificationLabel(phase) });
+      if (nextDate === tomorrowStr) items.push({ id:`${l.id}_${phase}_tomorrow`, company:l.company, date:nextDate, type:"tomorrow", phase, label:interviewNotificationLabel(phase) });
       return items;
     })
     .filter(n => !seenIds.has(n.id));
@@ -865,7 +911,7 @@ function NotificationBanner({ notifications, dismiss, dismissAll }) {
             className="flex items-center gap-2 text-amber-800 font-semibold text-sm"
           >
             <Ic n="Bell" size={15}/>
-            面接通知 {notifications.length}件
+            面談・面接通知 {notifications.length}件
             <Ic n="ChevronDown" size={13} cls={`transition-transform ${expanded ? "rotate-180" : ""}`}/>
           </button>
           <button onClick={dismissAll} className="text-xs text-amber-600 hover:text-amber-800 underline">
@@ -881,7 +927,7 @@ function NotificationBanner({ notifications, dismiss, dismissAll }) {
                     {n.type === "today" ? "本日" : "明日"}
                   </span>
                   <span className="text-gray-800 font-medium">{n.company}</span>
-                  <span className="text-gray-500 text-xs">{n.date} 面接</span>
+                  <span className="text-gray-500 text-xs">{n.date} {n.label}</span>
                 </div>
                 <button onClick={() => dismiss(n.id)} className="text-gray-400 hover:text-gray-600 ml-2 p-1">
                   <Ic n="X" size={14}/>
@@ -980,9 +1026,10 @@ function inCls(err) {
 }
 
 function routeLabel(log) {
-  if (["エージェント","他エージェント経由","マイナビ経由"].includes(log.route) && log.agent) return `${log.route} · ${log.agent}`;
-  if (log.route==="その他"       && log.media) return `その他 (${log.media})`;
-  return log.route;
+  const route = normalizeRoute(log.route);
+  if (route==="エージェント経由" && log.agent) return `${route} · ${log.agent}`;
+  if (route==="その他"       && log.media) return `その他 (${log.media})`;
+  return route;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1319,7 +1366,7 @@ function DataManagementPanel({ logs }) {
 // 一覧画面
 // ══════════════════════════════════════════════════════════════════
 function exportLogs(logs) {
-  const json = JSON.stringify(logs, null, 2);
+  const json = JSON.stringify(normalizeLogsWithUniqueIds(logs), null, 2);
   downloadTextFile(json, `job_logs_${todayStamp()}.json`, "application/json");
 }
 
@@ -2990,13 +3037,14 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
     company: initial.company || "",
     ...createLogDefaults(),
     ...Object.fromEntries(Object.keys(LOG_DEFAULTS).map(k => [k, cloneData(initial[k] ?? LOG_DEFAULTS[k])])),
+    route: normalizeRoute(initial.route),
     applicationDate:"", applicationMemo:"",
   } : emptyForm());
   const [errors, setErrors] = useState({});
   const [showDel, setShowDel] = useState(false);
 
   const set = (k,v) => { setForm(f=>({...f,[k]:v})); setErrors(e=>({...e,[k]:undefined})); };
-  const handleRoute = (v) => setForm(f=>({...f, route:v, agent:"", media:""}));
+  const handleRoute = (v) => setForm(f=>({...f, route:normalizeRoute(v), agent:"", media:""}));
   const handleStage = (v) => setForm(f=>({
     ...f,
     stage:v,
@@ -3019,7 +3067,7 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
     }
   };
 
-  const showAgent     = ["エージェント","他エージェント経由","マイナビ経由"].includes(form.route);
+  const showAgent     = normalizeRoute(form.route)==="エージェント経由";
   const showMedia     = form.route==="その他";
   const showDismissal = form.stage==="お見送り";
   const showHold      = form.stage===HOLD_STAGE;
@@ -3174,9 +3222,9 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
             </div>
           )}
 
-          {/* 次回面接日 */}
+          {/* 面談・面接日 */}
           <div className="p-4">
-            <FormField label="次回面接日">
+            <FormField label="面談・面接日">
               <input type="date" value={form.interviewDate} onChange={e=>set("interviewDate",e.target.value)} className={inCls()}/>
             </FormField>
           </div>
