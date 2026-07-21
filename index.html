@@ -2332,16 +2332,32 @@ function PreparationAttachments({ log, onUpdate }) {
 
 function CompanyUnderstandingTab({ log, onUpdate }) {
   const [data, setData] = useState(() => normalizeInterviewPreparation(log.companyUnderstanding));
-  const [preview, setPreview] = useState({});
-  const [saved, setSaved] = useState(false);
+  const [editing, setEditing] = useState({});
+  const [editStartValues, setEditStartValues] = useState({});
+  const [savedSection, setSavedSection] = useState("");
   const [mdImported, setMdImported] = useState(false);
   const fileInputRef = useRef(null);
+  const hasUnsavedChanges = PREPARATION_SECTIONS.some(section =>
+    editing[section.key] && (data[section.key] || "") !== (editStartValues[section.key] || "")
+  );
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warnBeforeUnload = e => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
+
   const handleMdImport = e => {
     const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
       const parsed = parseMarkdownToPreparation(String(ev.target.result || ""));
+      setEditStartValues(starts => PREPARATION_SECTIONS.reduce((next, section) => ({
+        ...next, [section.key]:editing[section.key] ? starts[section.key] : (data[section.key] || "")
+      }), {}));
       setData(d => ({ ...d, ...parsed, legacyData:d.legacyData, migratedFrom:d.migratedFrom }));
+      setEditing(PREPARATION_SECTIONS.reduce((next, section) => ({ ...next, [section.key]:true }), {}));
       setMdImported(true); setTimeout(() => setMdImported(false), 2500);
     };
     reader.readAsText(file); e.target.value = "";
@@ -2355,9 +2371,22 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
     const next = (data[key] || "").slice(0, el.selectionStart) + markdown + (data[key] || "").slice(el.selectionEnd);
     setData(d => ({ ...d, [key]:next }));
   };
-  const save = () => {
-    onUpdate(log.id, { companyUnderstanding:{ ...data, schemaVersion:2 } });
-    setSaved(true); setTimeout(() => setSaved(false), 2000);
+  const startEditing = key => {
+    setEditStartValues(starts => ({ ...starts, [key]:data[key] || "" }));
+    setEditing(current => ({ ...current, [key]:true }));
+  };
+  const saveSection = key => {
+    const persisted = normalizeInterviewPreparation(log.companyUnderstanding);
+    onUpdate(log.id, { companyUnderstanding:{ ...persisted, [key]:data[key] || "", schemaVersion:2 } });
+    setEditStartValues(starts => ({ ...starts, [key]:data[key] || "" }));
+    setEditing(current => ({ ...current, [key]:false }));
+    setSavedSection(key); setTimeout(() => setSavedSection(current => current === key ? "" : current), 2000);
+  };
+  const cancelEditing = key => {
+    const changed = (data[key] || "") !== (editStartValues[key] || "");
+    if (changed && !window.confirm("未保存の変更を破棄してプレビューに戻りますか？")) return;
+    setData(current => ({ ...current, [key]:editStartValues[key] || "" }));
+    setEditing(current => ({ ...current, [key]:false }));
   };
   return <div className="space-y-4">
     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
@@ -2368,7 +2397,6 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
           <Ic n="Upload" size={12} cls="inline mr-1"/>{mdImported ? "取り込み完了 ✓" : "MDを取り込む"}
         </button>
         <input ref={fileInputRef} type="file" accept=".md,.markdown,text/markdown,text/plain" className="hidden" onChange={handleMdImport}/>
-        <button onClick={save} className={`text-xs font-bold px-4 py-2 rounded-lg text-white ${saved ? "bg-emerald-500" : "bg-blue-600"}`}>{saved ? "保存 ✓" : "保存する"}</button>
       </div>
     </div>
 
@@ -2379,21 +2407,27 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
     {PREPARATION_SECTIONS.map(section => <div key={section.key} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
       <div className="flex items-center justify-between bg-gray-50 px-4 py-3 border-b border-gray-100">
         <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2"><Ic n={section.icon} size={15} cls="text-blue-500"/>{section.label}</h3>
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
-          <button onClick={() => setPreview(p => ({...p, [section.key]:false}))} className={`px-3 py-1.5 ${!preview[section.key] ? "bg-blue-600 text-white" : "bg-white text-gray-500"}`}>編集</button>
-          <button onClick={() => setPreview(p => ({...p, [section.key]:true}))} className={`px-3 py-1.5 ${preview[section.key] ? "bg-blue-600 text-white" : "bg-white text-gray-500"}`}>プレビュー</button>
-        </div>
+        {savedSection === section.key && <span className="text-xs font-bold text-emerald-600">保存しました ✓</span>}
       </div>
       <div className="p-4">
-        {preview[section.key] ? <div className="min-h-[180px]"><MarkdownPreview value={data[section.key]}/></div> :
+        {editing[section.key] ? <>
           <textarea value={data[section.key] || ""} onChange={e => setData(d => ({...d, [section.key]:e.target.value}))}
             onPaste={e => handlePaste(e, section.key)} placeholder={section.placeholder} rows={10}
-            className={inCls() + " min-h-[220px] resize-y font-mono leading-relaxed"}/>}
+            className={inCls() + " min-h-[220px] resize-y font-mono leading-relaxed"}/>
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={() => saveSection(section.key)} className="bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-lg">保存</button>
+            <button onClick={() => cancelEditing(section.key)} className="bg-white text-gray-600 border border-gray-200 text-xs font-bold px-4 py-2 rounded-lg">キャンセル</button>
+          </div>
+        </> : <>
+          <div className="min-h-[180px]"><MarkdownPreview value={data[section.key]}/></div>
+          <div className="flex justify-end mt-3">
+            <button onClick={() => startEditing(section.key)} className="bg-white text-blue-600 border border-blue-200 text-xs font-bold px-4 py-2 rounded-lg hover:bg-blue-50">編集する</button>
+          </div>
+        </>}
       </div>
     </div>)}
 
     <PreparationAttachments log={log} onUpdate={onUpdate}/>
-    <button onClick={save} className={`btn-blue w-full py-3 rounded-xl font-bold text-sm text-white ${saved ? "bg-emerald-500" : "bg-blue-600"}`}>{saved ? "保存しました ✓" : "面接準備資料を保存"}</button>
   </div>;
 }
 
