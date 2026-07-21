@@ -15,24 +15,8 @@
       }
     }
   </script>
-  <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
   <style>
     body { font-family: 'Inter', sans-serif; background: #F8FAFC; }
-
-    /* Quill Rich Text Editor */
-    .rich-editor-wrap { border: 1px solid #E5E7EB; border-radius: 8px; overflow: hidden; background: #F9FAFB; }
-    .rich-editor-wrap .ql-toolbar.ql-snow { border: none; border-bottom: 1px solid #E5E7EB; background: #F3F4F6; padding: 6px 8px; }
-    .rich-editor-wrap .ql-container.ql-snow { border: none; font-family: 'Inter', sans-serif; font-size: 14px; background: #fff; }
-    .rich-editor-wrap .ql-editor { min-height: 220px; line-height: 1.75; color: #1F2937; padding: 12px 14px; }
-    .rich-editor-wrap .ql-editor.ql-blank::before { color: #9CA3AF; font-style: normal; }
-    .rich-editor-wrap .ql-editor h2 { font-size: 1.1em; font-weight: 700; margin: 0.75em 0 0.25em; color: #111827; }
-    .rich-editor-wrap .ql-editor ul, .rich-editor-wrap .ql-editor ol { padding-left: 1.4em; }
-    .rich-editor-wrap .ql-snow .ql-stroke { stroke: #6B7280; }
-    .rich-editor-wrap .ql-snow .ql-fill { fill: #6B7280; }
-    .rich-editor-wrap .ql-snow.ql-toolbar button:hover .ql-stroke,
-    .rich-editor-wrap .ql-snow.ql-toolbar button.ql-active .ql-stroke { stroke: #2563EB; }
-    .rich-editor-wrap .ql-snow.ql-toolbar button:hover .ql-fill,
-    .rich-editor-wrap .ql-snow.ql-toolbar button.ql-active .ql-fill { fill: #2563EB; }
 
     .fade-in  { animation: fadeIn  0.2s ease-out; }
     .slide-in { animation: slideIn 0.2s ease-out; }
@@ -89,7 +73,6 @@
 <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-<script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 <script type="text/babel" data-presets="react">
@@ -194,6 +177,7 @@ function buildSelectionProgress(logs) {
     nextInterviewDate: getNextDate(log),
     interviewer: log.interviewer,
     memo: _stripHtml(log.memo),
+    memoSchemaVersion: log.memoSchemaVersion || 1,
     dismissalReason: log.dismissalReason,
     dismissalNote: log.dismissalNote,
     companyUrl: log.details?.companyUrl || "",
@@ -385,7 +369,7 @@ const getMaterialFile = (id) => materialDbRequest("readonly", store => store.get
 const deleteMaterialFile = (id) => materialDbRequest("readwrite", store => store.delete(id));
 
 // ── RichMemo コンポーネント ────────────────────────────────────────────
-// Quill で保存した HTML メモを表示する唯一のコンポーネント。
+// Markdownメモと旧Quill HTMLメモの両方を安全に表示する。
 // dangerouslySetInnerHTML / DOMPurify の呼び出しはすべてここに集約する。
 //
 //   preview=false（デフォルト）: HTML をレンダリング（詳細画面などフル表示用）
@@ -394,9 +378,16 @@ const deleteMaterialFile = (id) => materialDbRequest("readwrite", store => store
 // 【拡張方法】サニタイザー変更・レンダラー変更はここだけ修正すれば全体に反映される。
 function RichMemo({ html, preview = false, className = "" }) {
   if (!html) return null;
+  const isLegacyHtml = /<\/?[a-z][\s\S]*>/i.test(html);
   if (preview) {
-    const text = _stripHtml(html);
+    const text = isLegacyHtml
+      ? _stripHtml(html)
+      : html.replace(/```[\s\S]*?```/g, " ").replace(/[#>*_`~\[\]-]/g, " ").replace(/\s+/g, " ").trim();
     return text ? <p className={className}>{text}</p> : null;
+  }
+  if (!isLegacyHtml) {
+    const rendered = window.marked ? marked.parse(html, { breaks:true, gfm:true }) : html.replace(/\n/g, "<br>");
+    return <div className={`markdown-content ${className}`} dangerouslySetInnerHTML={_safeHtml(rendered)}/>;
   }
   return (
     <div className={`memo-content ${className}`}
@@ -631,6 +622,7 @@ const createLogDefaults = () => ({
   interviewDate:  "",
   interviewer:    "",
   memo:           "",
+  memoSchemaVersion: 1,
   events:         [],
 });
 const LOG_DEFAULTS = createLogDefaults();
@@ -1432,7 +1424,6 @@ function exportLogs(logs) {
 function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
   const [search,          setSearch]          = useState("");
   const [filterStage,     setFilterStage]     = useState("すべて");
-  const [filterPriority,  setFilterPriority]  = useState("すべて");
   const [filterStatusCategory, setFilterStatusCategory] = useState("すべて");
   const fileInputRef = React.useRef(null);
 
@@ -1465,9 +1456,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
     const q = search.toLowerCase();
     const ms = !q || [l.company, l.jobPosition, l.stage, l.route, l.agent, l.media, l.selectionPhase, l.resultDecision, l.statusNote, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
     const mf = filterStage==="すべて" || l.stage===filterStage;
-    const mp = filterPriority==="すべて" || l.priority===filterPriority;
     const mc = filterStatusCategory==="すべて" || getStatusCategory(l)===filterStatusCategory;
-    return ms && mf && mp && mc;
+    return ms && mf && mc;
   });
 
   const stats = [
@@ -1566,22 +1556,6 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
               ))}
             </div>
 
-            {/* 優先度フィルター */}
-            <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
-              {["すべて",...PRIORITIES].map(p=>{
-                const cfg = PRIORITY_CFG[p];
-                const isSel = filterPriority===p;
-                return (
-                  <button key={p} onClick={()=>setFilterPriority(p)}
-                    className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
-                      isSel
-                        ? (cfg ? `${cfg.bg} ${cfg.text} border-transparent shadow-sm` : "bg-blue-600 text-white border-blue-600")
-                        : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
-                    }`}>{p==="すべて" ? "優先度: すべて" : p}</button>
-                );
-              })}
-            </div>
-
             <p className="text-xs text-gray-400 font-medium mt-2 mb-3">{filtered.length}件</p>
 
             {/* カードリスト */}
@@ -1591,8 +1565,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                   <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <Ic n="Building" size={30} cls="text-gray-300"/>
                   </div>
-                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて"||filterPriority!=="すべて"||filterStatusCategory!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
-                  {!search && filterStage==="すべて" && filterPriority==="すべて" && filterStatusCategory==="すべて" && (
+                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて"||filterStatusCategory!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
+                  {!search && filterStage==="すべて" && filterStatusCategory==="すべて" && (
                     <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">最初の企業を追加する →</button>
                   )}
                 </div>
@@ -1603,7 +1577,6 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <h2 className="font-bold text-gray-900 text-base leading-snug flex-1 min-w-0 break-words">{log.company}</h2>
                     <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
-                      {log.priority && <PriorityBadge priority={log.priority}/>}
                       <StageBadge stage={log.stage}/>
                     </div>
                   </div>
@@ -2023,173 +1996,89 @@ function formatDateTime(value) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// リッチテキストエディタ（Quill ラッパー）
-// ══════════════════════════════════════════════════════════════════
-function RichTextEditor({ value, onChange, placeholder }) {
-  const containerRef = useRef(null);
-  const quillRef = useRef(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-
-  useEffect(() => {
-    const quill = new Quill(containerRef.current, {
-      theme: 'snow',
-      placeholder: placeholder || '',
-      modules: {
-        toolbar: [
-          ['bold', 'italic'],
-          [{ header: 2 }],
-          [{ list: 'ordered' }, { list: 'bullet' }],
-          ['clean']
-        ]
-      }
-    });
-    quillRef.current = quill;
-
-    if (value) {
-      quill.root.innerHTML = value;
-    }
-
-    quill.on('text-change', () => {
-      onChangeRef.current(quill.root.innerHTML);
-    });
-
-    return () => {
-      if (containerRef.current) containerRef.current.innerHTML = '';
-      quillRef.current = null;
-    };
-  }, []);
-
-  return (
-    <div className="rich-editor-wrap">
-      <div ref={containerRef} />
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════
 // メモタブ（企業詳細）
 // ══════════════════════════════════════════════════════════════════
-function MemoTab({ log, onUpdate, onOpenCriteria }) {
-  const [memo, setMemo] = useState(log.memo || "");
-  const [decision, setDecision] = useState(() => ({
-    ...COMPANY_DECISION_DEFAULTS,
-    ...Object.fromEntries(Object.keys(COMPANY_DECISION_DEFAULTS).map(k => [k, log[k] || ""])),
-  }));
-  const [saved, setSaved] = useState(false);
+function migrateLegacyMemoToMarkdown(log) {
+  if (log.memoSchemaVersion >= 2) return log.memo || "";
+  const legacyMemo = /<\/?[a-z][\s\S]*>/i.test(log.memo || "")
+    ? htmlFragmentToMarkdown(log.memo)
+    : (log.memo || "");
+  const legacyFields = [
+    ["優先順位", log.priority],
+    ["転職軸との一致度", log.axisMatch],
+    ["技術期待値", log.techExpectation],
+    ["業務改善・仕組み化との親和性", log.improvementFit],
+    ["懸念点", log.concerns],
+    ["次回確認したい質問", log.nextQuestions],
+    ["面談後の判断", log.postMeetingDecision],
+    ["判断理由", log.decisionReason],
+  ].filter(([, value]) => String(value || "").trim());
+  if (!legacyFields.length) return legacyMemo;
+  const migrated = ["## 旧評価項目", ...legacyFields.map(([label, value]) => `### ${label}\n\n${value}`)].join("\n\n");
+  return [legacyMemo.trim(), migrated].filter(Boolean).join("\n\n");
+}
 
-  const setDecisionField = (key, value) => setDecision(d => ({ ...d, [key]: value }));
+function MemoTab({ log, onUpdate }) {
+  const initialMemo = migrateLegacyMemoToMarkdown(log);
+  const [memo, setMemo] = useState(initialMemo);
+  const [editStartValue, setEditStartValue] = useState(initialMemo);
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const hasUnsavedChanges = editing && memo !== editStartValue;
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warnBeforeUnload = e => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   const handleSave = () => {
-    onUpdate(log.id, { memo, ...decision });
+    onUpdate(log.id, { memo, memoSchemaVersion:2 });
+    setEditStartValue(memo);
+    setEditing(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
-
-  const assessmentRows = [
-    { key:"axisMatch", label:"転職軸との一致度" },
-    { key:"techExpectation", label:"技術期待値" },
-    { key:"improvementFit", label:"業務改善・仕組み化との親和性" },
-  ];
-
-  const renderSegmented = (key, options) => (
-    <div className="grid grid-cols-3 gap-2">
-      {options.map(opt => {
-        const selected = decision[key] === opt;
-        return (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => setDecisionField(key, selected ? "" : opt)}
-            className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${
-              selected ? "bg-blue-50 text-blue-700 border-blue-400 shadow-sm" : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"
-            }`}>
-            {opt}
-          </button>
-        );
-      })}
-    </div>
-  );
+  const handleCancel = () => {
+    if (hasUnsavedChanges && !window.confirm("未保存の変更を破棄してプレビューに戻りますか？")) return;
+    setMemo(editStartValue);
+    setEditing(false);
+  };
+  const startEditing = () => {
+    setEditStartValue(memo);
+    setEditing(true);
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Ic n="FileText" size={13}/>自由メモ
-          </p>
-          <button
-            onClick={onOpenCriteria}
-            className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 transition-colors">
-            <Ic n="BookOpen" size={12}/>活動軸
-          </button>
-        </div>
-        <RichTextEditor
-          key={log.id}
-          value={memo}
-          onChange={setMemo}
-          placeholder="企業に関するメモを自由に記入してください..."
-        />
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="flex items-center justify-between bg-gray-50 px-4 py-3 border-b border-gray-100">
+        <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
+          <Ic n="FileText" size={15} cls="text-blue-500"/>メモ
+        </h3>
+        {saved && <span className="text-xs font-bold text-emerald-600">保存しました ✓</span>}
       </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-50 overflow-hidden">
-        <div className="p-4">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Ic n="Briefcase" size={13}/>判断項目
-          </p>
-        </div>
-
-        <div className="p-4 grid gap-4 sm:grid-cols-3">
-          {assessmentRows.map(row => (
-            <FormField key={row.key} label={row.label}>
-              {renderSegmented(row.key, ASSESSMENT_LEVELS)}
-            </FormField>
-          ))}
-        </div>
-
-        <div className="p-4 space-y-3">
-          <FormField label="懸念点">
-            <textarea
-              value={decision.concerns}
-              onChange={e => setDecisionField("concerns", e.target.value)}
-              placeholder="引っかかっている点、確認不足の点、リスク..."
-              rows={3}
-              className={inCls()+" resize-y"}
-            />
-          </FormField>
-          <FormField label="次回確認したい質問">
-            <textarea
-              value={decision.nextQuestions}
-              onChange={e => setDecisionField("nextQuestions", e.target.value)}
-              placeholder="次回面談・面接で聞きたいこと..."
-              rows={3}
-              className={inCls()+" resize-y"}
-            />
-          </FormField>
-        </div>
-
-        <div className="p-4 space-y-3">
-          <FormField label="面談後の判断">
-            {renderSegmented("postMeetingDecision", POST_MEETING_DECISIONS)}
-          </FormField>
-          <FormField label="判断理由メモ">
-            <textarea
-              value={decision.decisionReason}
-              onChange={e => setDecisionField("decisionReason", e.target.value)}
-              placeholder="なぜ進む / 保留 / 見送りと判断したか..."
-              rows={4}
-              className={inCls()+" resize-y"}
-            />
-          </FormField>
-        </div>
+      <div className="p-4">
+        {editing ? <>
+          <textarea
+            value={memo}
+            onChange={e => setMemo(e.target.value)}
+            placeholder={"## 面談メモ\n\n企業への印象、確認事項、面接後の振り返りなど..."}
+            rows={14}
+            className={inCls() + " min-h-[300px] resize-y font-mono leading-relaxed"}
+          />
+          <p className="text-xs text-gray-400 mt-2">Markdownで見出し、箇条書き、太字などを入力できます。</p>
+          <div className="flex justify-end gap-2 mt-3">
+            <button onClick={handleSave} className="bg-blue-600 text-white text-xs font-bold px-4 py-2 rounded-lg">保存</button>
+            <button onClick={handleCancel} className="bg-white text-gray-600 border border-gray-200 text-xs font-bold px-4 py-2 rounded-lg">キャンセル</button>
+          </div>
+        </> : <>
+          <div className="min-h-[240px]"><MarkdownPreview value={memo}/></div>
+          <div className="flex justify-end mt-3">
+            <button onClick={startEditing} className="bg-white text-blue-600 border border-blue-200 text-xs font-bold px-4 py-2 rounded-lg hover:bg-blue-50">編集する</button>
+          </div>
+        </>}
       </div>
-
-      <button onClick={handleSave}
-        className={`btn-blue w-full py-3 rounded-xl font-bold text-sm shadow-sm transition-all ${
-          saved ? "bg-emerald-500 text-white" : "bg-blue-600 text-white"
-        }`}>
-        {saved ? "保存しました ✓" : "保存する"}
-      </button>
     </div>
   );
 }
@@ -2477,25 +2366,12 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
           <div className="flex items-center justify-between mb-3 gap-3">
             <div className="flex items-center gap-2 flex-wrap">
               <StageBadge stage={log.stage}/>
-              {log.priority && <PriorityBadge priority={log.priority}/>}
             </div>
             {getNextDate(log) && (
               <span className="flex items-center gap-1.5 text-xs text-gray-500">
                 <Ic n="Calendar" size={13} cls="text-gray-400"/>次回: {getNextDate(log)}
               </span>
             )}
-          </div>
-          <div className="mb-3">
-            <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">優先度</label>
-            <select
-              value={log.priority||""}
-              onChange={e => onUpdate(log.id, { priority: e.target.value })}
-              className="w-full bg-gray-50 border border-gray-200 rounded-lg px-3.5 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-              style={{backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%236B7280'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E\")",backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center",backgroundSize:"16px",paddingRight:"40px",WebkitAppearance:"none",appearance:"none"}}
-            >
-              <option value="">未設定</option>
-              {PRIORITIES.map(p=><option key={p} value={p}>{p}</option>)}
-            </select>
           </div>
           <div className="mb-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-3">
             <p className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
@@ -2802,7 +2678,7 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
         {/* タブコンテンツ: メモ */}
         {activeTab === "memo" && (
           <div className="fade-in">
-            <MemoTab log={log} onUpdate={onUpdate} onOpenCriteria={onOpenCriteria}/>
+            <MemoTab log={log} onUpdate={onUpdate}/>
           </div>
         )}
 
@@ -3116,26 +2992,6 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
                         sel ? `${c.btn} shadow-sm` : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"
                       }`}>
                       {s}
-                    </button>
-                  );
-                })}
-              </div>
-            </FormField>
-          </div>
-
-          {/* 優先度 */}
-          <div className="p-4">
-            <FormField label="優先度">
-              <div className="grid grid-cols-3 gap-2 mt-1">
-                {PRIORITIES.map(p=>{
-                  const cfg = PRIORITY_CFG[p];
-                  const sel = form.priority===p;
-                  return (
-                    <button key={p} type="button" onClick={()=>set("priority", sel ? "" : p)}
-                      className={`py-2 px-1 rounded-lg text-xs font-bold border-2 transition-all leading-tight ${
-                        sel ? `${cfg.bg} ${cfg.text} border-transparent shadow-sm` : "bg-white text-gray-400 border-gray-100 hover:border-gray-200"
-                      }`}>
-                      {p}
                     </button>
                   );
                 })}
