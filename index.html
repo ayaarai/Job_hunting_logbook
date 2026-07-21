@@ -66,6 +66,21 @@
     .memo-content ul { list-style-type: disc;    padding-left: 1.4em; margin: 0.2em 0; }
     .memo-content ol { list-style-type: decimal; padding-left: 1.4em; margin: 0.2em 0; }
     .memo-content li { margin: 0.1em 0; }
+    .markdown-content { color:#374151; font-size:14px; line-height:1.75; }
+    .markdown-content h1 { font-size:1.5em; font-weight:700; color:#111827; margin:1em 0 .45em; }
+    .markdown-content h2 { font-size:1.25em; font-weight:700; color:#111827; margin:1em 0 .4em; border-bottom:1px solid #E5E7EB; padding-bottom:.25em; }
+    .markdown-content h3 { font-size:1.08em; font-weight:700; color:#1F2937; margin:.9em 0 .35em; }
+    .markdown-content p { margin:.45em 0; }
+    .markdown-content ul { list-style:disc; padding-left:1.5em; margin:.45em 0; }
+    .markdown-content ol { list-style:decimal; padding-left:1.5em; margin:.45em 0; }
+    .markdown-content li { margin:.2em 0; }
+    .markdown-content strong { font-weight:700; color:#111827; }
+    .markdown-content blockquote { border-left:3px solid #93C5FD; padding:.25em .8em; color:#6B7280; background:#EFF6FF; margin:.6em 0; }
+    .markdown-content code { background:#F3F4F6; border-radius:4px; padding:.1em .3em; font-size:.9em; }
+    .markdown-content pre { background:#111827; color:#F9FAFB; padding:1em; border-radius:8px; overflow:auto; margin:.6em 0; }
+    .markdown-content a { color:#2563EB; text-decoration:underline; }
+    .markdown-content > :first-child { margin-top:0; }
+    .markdown-content > :last-child { margin-bottom:0; }
   </style>
 </head>
 <body style="background:#F8FAFC;">
@@ -76,6 +91,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef } = React;
 
@@ -621,19 +637,54 @@ const LOG_DEFAULTS = createLogDefaults();
 
 const defaultDetails = () => ({ jobDescription:"", companyUrl:"", attachments:[], files:[] });
 
-// ── 企業理解セクション定義 ────────────────────────────────────────────
-const UNDERSTANDING_SECTIONS = [
-  { key:"事業",         label:"事業",          bgLight:"bg-blue-50",   border:"border-blue-200",   text:"text-blue-700",   tagBg:"bg-blue-100",   tagText:"text-blue-700"   },
-  { key:"課題特徴",     label:"課題・特徴",     bgLight:"bg-orange-50", border:"border-orange-200", text:"text-orange-700", tagBg:"bg-orange-100", tagText:"text-orange-700" },
-  { key:"技術取り組み", label:"技術・取り組み", bgLight:"bg-purple-50", border:"border-purple-200", text:"text-purple-700", tagBg:"bg-purple-100", tagText:"text-purple-700" },
-  { key:"カルチャー",   label:"カルチャー",     bgLight:"bg-green-50",  border:"border-green-200",  text:"text-green-700",  tagBg:"bg-green-100",  tagText:"text-green-700"  },
-  { key:"自分との接点", label:"自分との接点",   bgLight:"bg-teal-50",   border:"border-teal-200",   text:"text-teal-700",   tagBg:"bg-teal-100",   tagText:"text-teal-700"   },
-  { key:"やりたいこと", label:"やりたいこと",   bgLight:"bg-red-50",    border:"border-red-200",    text:"text-red-700",    tagBg:"bg-red-100",    tagText:"text-red-700"    },
+// ── 面接準備資料 ─────────────────────────────────────────────────────
+const PREPARATION_SECTIONS = [
+  { key:"companyOverview", label:"会社概要・事業理解", icon:"Building2", placeholder:"## 会社概要\n\n事業内容、プロダクト、顧客、強みなど..." },
+  { key:"motivation",      label:"志望動機",           icon:"Heart",     placeholder:"## 志望理由\n\n**結論**、自分との接点、入社後に実現したいことなど..." },
+  { key:"talkingPoints",   label:"面接で話すポイント", icon:"MessageCircle", placeholder:"- 実績や経験\n- 強み\n- 具体的なエピソード" },
+  { key:"questions",       label:"確認したい質問",     icon:"HelpCircle", placeholder:"- チーム構成について\n- 期待される役割について" },
+  { key:"concerns",        label:"懸念点・確認事項",   icon:"AlertCircle", placeholder:"- 条件面\n- 業務範囲\n- 選考中に確認したい点" },
 ];
+const PREPARATION_FILE_CATEGORIES = ["求人票", "会社説明資料", "面接メモ", "その他資料"];
+const defaultInterviewPreparation = () => ({
+  schemaVersion: 2,
+  companyOverview:"", motivation:"", talkingPoints:"", questions:"", concerns:"",
+});
 const defaultUnderstandingSection = () => ({ summary:"", points:[""], tags:[], highlights:[] });
-const DEFAULT_UND_SECTION = defaultUnderstandingSection();
-const defaultUnderstanding = () =>
-  Object.fromEntries(UNDERSTANDING_SECTIONS.map(s => [s.key, defaultUnderstandingSection()]));
+const LEGACY_UNDERSTANDING_LABELS = {
+  "事業":"事業", "課題特徴":"課題・特徴", "技術取り組み":"技術・取り組み",
+  "カルチャー":"カルチャー", "自分との接点":"自分との接点", "やりたいこと":"やりたいこと",
+};
+
+function legacySectionToMarkdown(label, sec) {
+  if (!sec) return "";
+  const body = [];
+  if (sec.summary) body.push(sec.summary);
+  (sec.points || []).filter(Boolean).forEach(p => body.push(`- ${p}`));
+  if ((sec.tags || []).length) body.push(`\n${sec.tags.join(" ")}`);
+  return body.length ? `### ${label}\n\n${body.join("\n")}` : "";
+}
+
+function normalizeInterviewPreparation(value) {
+  if (!value) return defaultInterviewPreparation();
+  if (value.schemaVersion === 2 || PREPARATION_SECTIONS.some(s => typeof value[s.key] === "string")) {
+    return { ...defaultInterviewPreparation(), ...cloneData(value), schemaVersion:2 };
+  }
+  const converted = defaultInterviewPreparation();
+  converted.companyOverview = Object.entries(LEGACY_UNDERSTANDING_LABELS)
+    .map(([key, label]) => legacySectionToMarkdown(label, value[key])).filter(Boolean).join("\n\n");
+  converted.motivation = ["自分との接点", "やりたいこと"]
+    .map(key => legacySectionToMarkdown(LEGACY_UNDERSTANDING_LABELS[key], value[key])).filter(Boolean).join("\n\n");
+  converted.talkingPoints = Object.entries(LEGACY_UNDERSTANDING_LABELS).flatMap(([key, label]) => {
+    const sec = value[key];
+    return (sec?.highlights || []).map(i => sec.points?.[i]).filter(Boolean).map(p => `- **${label}:** ${p}`);
+  }).join("\n");
+  converted.concerns = legacySectionToMarkdown("課題・特徴", value["課題特徴"]);
+  // 元の構造も残し、将来の再移行や確認ができるようにする。
+  converted.legacyData = cloneData(value);
+  converted.migratedFrom = "company-understanding-v1";
+  return converted;
+}
 
 const normalizeStage = (stage) => {
   const value = String(stage || LOG_DEFAULTS.stage).trim();
@@ -749,7 +800,9 @@ const normalizeLog = (log) => {
         }
       : defaultDetails(),
     events: normalizeEventsWithUniqueIds(source.events),
-    companyUnderstanding: source.companyUnderstanding ? cloneData(source.companyUnderstanding) : null,
+    companyUnderstanding: source.companyUnderstanding
+      ? normalizeInterviewPreparation(source.companyUnderstanding)
+      : null,
   };
 };
 
