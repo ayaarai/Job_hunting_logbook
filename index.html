@@ -1024,6 +1024,12 @@ const SVG_ICONS = {
   BookOpen:     <><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></>,
   Star:         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>,
   Zap:          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>,
+  Building2:    <><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18"/><path d="M6 12H4a2 2 0 0 0-2 2v8h20V9a2 2 0 0 0-2-2h-2"/><path d="M10 6h4M10 10h4M10 14h4M10 18h4"/></>,
+  Heart:        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"/>,
+  MessageCircle:<><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></>,
+  HelpCircle:   <><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 1 1 5.83 1c0 2-3 2-3 4"/><line x1="12" y1="18" x2="12.01" y2="18"/></>,
+  Paperclip:    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>,
+  CheckCircle:  <><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></>,
 };
 
 function Ic({ n, size=16, cls="" }) {
@@ -2189,336 +2195,206 @@ function MemoTab({ log, onUpdate, onOpenCriteria }) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 企業理解タブ
+// 面接準備資料タブ
 // ══════════════════════════════════════════════════════════════════
-// Markdownの見出しとセクションキーのマッピング
-const MD_HEADING_MAP = [
-  { patterns: ["事業"],                          key: "事業"         },
-  { patterns: ["課題", "特徴"],                   key: "課題特徴"     },
-  { patterns: ["技術", "取り組み", "仕組み"],      key: "技術取り組み" },
-  { patterns: ["組織", "カルチャー", "文化"],      key: "カルチャー"   },
-  { patterns: ["自分との接点", "接点"],            key: "自分との接点" },
-  { patterns: ["やりたいこと", "志望動機"],        key: "やりたいこと" },
+const PREPARATION_MD_MAP = [
+  { patterns:["会社概要", "事業理解", "企業理解", "事業内容"], key:"companyOverview" },
+  { patterns:["志望動機", "志望理由"], key:"motivation" },
+  { patterns:["面接で話す", "話すポイント", "アピールポイント"], key:"talkingPoints" },
+  { patterns:["確認したい質問", "質問", "逆質問"], key:"questions" },
+  { patterns:["懸念点", "確認事項", "懸念事項"], key:"concerns" },
 ];
 
-function parseMarkdownToUnderstanding(mdText) {
-  // 現在のデフォルト構造をベースにする
-  const result = defaultUnderstanding();
-
-  // ファイルを見出しごとに分割（## レベル）
-  const lines = mdText.split("\n");
+function parseMarkdownToPreparation(mdText) {
+  const result = defaultInterviewPreparation();
+  const headingPattern = /^(#{1,3})\s+(.+)$/;
   let currentKey = null;
-  let currentLines = [];
-
-  const flushSection = () => {
-    if (!currentKey || currentLines.length === 0) return;
-    const content = currentLines.join("\n").trim();
-    if (!content) return;
-
-    // blockquote（"> "）を概要に（最初の1行）
-    const summaryMatch = content.match(/^>\s*(.+)/m);
-    const summary = summaryMatch ? summaryMatch[1].trim() : "";
-
-    // "- "で始まる行をポイントに（tags行は除く）
-    const points = currentLines
-      .filter(l => /^- /.test(l) && !/^tags:/.test(l))
-      .map(l => l.replace(/^- /, "").trim())
-      .filter(Boolean);
-
-    // "tags:" 行からタグを抽出
-    const tagsLine = currentLines.find(l => /^tags:/.test(l));
-    const tags = tagsLine
-      ? tagsLine.replace(/^tags:\s*/, "").split(/[\s,]+/).filter(t => t.startsWith("#"))
-      : [];
-
-    result[currentKey] = {
-      summary,
-      points: points.length > 0 ? points : [""],
-      tags,
-      highlights: [],
-    };
-    currentLines = [];
-  };
-
-  for (const line of lines) {
-    const h2match = line.match(/^##\s+(.+)/);
-    if (h2match) {
-      flushSection();
-      const heading = h2match[1].trim();
-      // マッピングを探す（部分一致）
-      const found = MD_HEADING_MAP.find(m =>
-        m.patterns.some(p => heading.includes(p))
-      );
-      currentKey = found ? found.key : null;
-      currentLines = [];
-    } else if (currentKey) {
-      currentLines.push(line);
+  let preamble = [];
+  let buffer = [];
+  const flush = () => {
+    if (currentKey && buffer.join("\n").trim()) {
+      const content = buffer.join("\n").trim();
+      result[currentKey] = result[currentKey] ? `${result[currentKey]}\n\n${content}` : content;
     }
-  }
-  flushSection();
-
+    buffer = [];
+  };
+  mdText.replace(/\r\n/g, "\n").split("\n").forEach(line => {
+    const match = line.match(headingPattern);
+    if (match) {
+      const found = PREPARATION_MD_MAP.find(m => m.patterns.some(p => match[2].includes(p)));
+      if (found) {
+        flush(); currentKey = found.key; buffer = [];
+        return;
+      }
+    }
+    if (currentKey) buffer.push(line); else preamble.push(line);
+  });
+  flush();
+  if (!PREPARATION_SECTIONS.some(s => result[s.key].trim())) result.companyOverview = mdText.trim();
+  else if (preamble.join("\n").trim()) result.companyOverview = `${preamble.join("\n").trim()}\n\n${result.companyOverview}`.trim();
   return result;
 }
 
+function htmlFragmentToMarkdown(html) {
+  const root = document.createElement("div");
+  root.innerHTML = DOMPurify.sanitize(html || "");
+  const walk = node => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    const content = Array.from(node.childNodes).map(walk).join("");
+    const tag = node.nodeName.toLowerCase();
+    if (/^h[1-6]$/.test(tag)) return `${"#".repeat(Number(tag[1]))} ${content.trim()}\n\n`;
+    if (tag === "strong" || tag === "b") return `**${content}**`;
+    if (tag === "em" || tag === "i") return `*${content}*`;
+    if (tag === "li") return `- ${content.trim()}\n`;
+    if (tag === "br") return "\n";
+    if (tag === "p" || tag === "div") return `${content.trim()}\n\n`;
+    if (tag === "a") return `[${content}](${node.getAttribute("href") || ""})`;
+    return content;
+  };
+  return Array.from(root.childNodes).map(walk).join("").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function MarkdownPreview({ value }) {
+  if (!value) return <p className="text-sm text-gray-400">内容はまだありません</p>;
+  const html = window.marked ? marked.parse(value, { breaks:true, gfm:true }) : value.replace(/\n/g, "<br>");
+  return <div className="markdown-content" dangerouslySetInnerHTML={_safeHtml(html)}/>;
+}
+
+function PreparationAttachments({ log, onUpdate }) {
+  const files = Array.isArray(log.details?.files) ? log.details.files : [];
+  const inputRef = useRef(null);
+  const [category, setCategory] = useState(PREPARATION_FILE_CATEGORIES[0]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const updateFiles = next => onUpdate(log.id, { details:{ ...defaultDetails(), ...(log.details || {}), files:next } });
+  const upload = async e => {
+    const selected = Array.from(e.target.files || []); if (!selected.length) return;
+    setBusy(true); setError("");
+    try {
+      const metas = [];
+      for (const file of selected) {
+        const id = `${log.id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        await putMaterialFile(id, file);
+        metas.push({ id, name:file.name, type:file.type || inferFileType(file.name), size:file.size,
+          uploadedAt:new Date().toISOString(), category, label:category });
+      }
+      updateFiles([...files, ...metas]);
+    } catch { setError("ファイルを保存できませんでした。ブラウザの空き容量を確認してください。"); }
+    finally { setBusy(false); e.target.value = ""; }
+  };
+  const open = async meta => {
+    const blob = await getMaterialFile(meta.id);
+    if (!blob) { setError("ファイル本体が見つかりませんでした。"); return; }
+    const url = URL.createObjectURL(blob); window.open(url, "_blank", "noopener,noreferrer");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  };
+  const download = async meta => {
+    const blob = await getMaterialFile(meta.id);
+    if (!blob) { setError("ファイル本体が見つかりませんでした。"); return; }
+    downloadBlob(blob, meta.name);
+  };
+  const remove = async meta => {
+    if (!window.confirm(`${meta.name} を削除しますか？`)) return;
+    await deleteMaterialFile(meta.id); updateFiles(files.filter(f => f.id !== meta.id));
+  };
+  return <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-4">
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div><h3 className="font-bold text-gray-800 text-sm flex items-center gap-2"><Ic n="Paperclip" size={15} cls="text-blue-500"/>資料添付</h3>
+        <p className="text-xs text-gray-400 mt-1">企業ごとに分類して保存します</p></div>
+      <div className="flex gap-2">
+        <select value={category} onChange={e => setCategory(e.target.value)} className={inCls() + " text-xs"}>
+          {PREPARATION_FILE_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+        </select>
+        <button onClick={() => inputRef.current?.click()} disabled={busy} className="bg-blue-600 text-white text-xs font-bold px-3 py-2 rounded-lg disabled:opacity-60">
+          {busy ? "保存中..." : "ファイルを追加"}
+        </button>
+        <input ref={inputRef} type="file" multiple className="hidden" onChange={upload}
+          accept=".pdf,.doc,.docx,.ppt,.pptx,.md,.markdown,.txt,.rtf,.png,.jpg,.jpeg,image/*,text/*"/>
+      </div>
+    </div>
+    {error && <p className="text-xs text-red-500">{error}</p>}
+    <div className="grid sm:grid-cols-2 gap-3">
+      {PREPARATION_FILE_CATEGORIES.map(cat => {
+        const items = files.filter(f => (f.category || f.label || "その他資料") === cat || (cat === "その他資料" && !PREPARATION_FILE_CATEGORIES.includes(f.category || f.label)));
+        return <div key={cat} className="border border-gray-100 rounded-lg p-3">
+          <p className="text-xs font-bold text-gray-600 mb-2">{cat} <span className="text-gray-400 font-normal">({items.length})</span></p>
+          {items.length === 0 ? <p className="text-xs text-gray-300">未添付</p> : <div className="space-y-1.5">{items.map(meta =>
+            <div key={meta.id} className="flex items-center gap-2 text-xs bg-gray-50 rounded-lg px-2.5 py-2">
+              <button onClick={() => open(meta)} className="flex-1 min-w-0 text-left text-blue-600 hover:underline truncate">{meta.name}</button>
+              <button onClick={() => download(meta)} className="text-gray-400 hover:text-blue-600" title="ダウンロード"><Ic n="Download" size={13}/></button>
+              <button onClick={() => remove(meta)} className="text-gray-300 hover:text-red-500" title="削除"><Ic n="X" size={13}/></button>
+            </div>)}</div>}
+        </div>;
+      })}
+    </div>
+  </div>;
+}
+
 function CompanyUnderstandingTab({ log, onUpdate }) {
-  const [data, setData] = useState(() => log.companyUnderstanding || defaultUnderstanding());
-  const [collapsed, setCollapsed] = useState({});
-  const [quickView, setQuickView] = useState(false);
-  const [showMotivation, setShowMotivation] = useState(false);
+  const [data, setData] = useState(() => normalizeInterviewPreparation(log.companyUnderstanding));
+  const [preview, setPreview] = useState({});
   const [saved, setSaved] = useState(false);
   const [mdImported, setMdImported] = useState(false);
   const fileInputRef = useRef(null);
-
-  const handleMdImport = (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  const handleMdImport = e => {
+    const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target.result;
-      const parsed = parseMarkdownToUnderstanding(text);
-      setData(parsed);
-      setMdImported(true);
-      setTimeout(() => setMdImported(false), 3000);
+    reader.onload = ev => {
+      const parsed = parseMarkdownToPreparation(String(ev.target.result || ""));
+      setData(d => ({ ...d, ...parsed, legacyData:d.legacyData, migratedFrom:d.migratedFrom }));
+      setMdImported(true); setTimeout(() => setMdImported(false), 2500);
     };
-    reader.readAsText(file);
-    // 同じファイルを再選択できるようにリセット
-    e.target.value = "";
+    reader.readAsText(file); e.target.value = "";
   };
-
-  const updateSection = (key, field, value) =>
-    setData(d => ({ ...d, [key]: { ...d[key], [field]: value } }));
-
-  const toggleCollapse = (key) =>
-    setCollapsed(c => ({ ...c, [key]: !c[key] }));
-
-  const toggleHighlight = (key, idx) => {
-    const hl = data[key].highlights || [];
-    updateSection(key, "highlights", hl.includes(idx) ? hl.filter(h => h !== idx) : [...hl, idx]);
+  const handlePaste = (e, key) => {
+    const html = e.clipboardData?.getData("text/html");
+    if (!html) return;
+    const markdown = htmlFragmentToMarkdown(html); if (!markdown) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const next = (data[key] || "").slice(0, el.selectionStart) + markdown + (data[key] || "").slice(el.selectionEnd);
+    setData(d => ({ ...d, [key]:next }));
   };
-
-  const addPoint = (key) =>
-    updateSection(key, "points", [...(data[key].points || []), ""]);
-
-  const updatePoint = (key, idx, val) => {
-    const pts = [...(data[key].points || [])]; pts[idx] = val;
-    updateSection(key, "points", pts);
+  const save = () => {
+    onUpdate(log.id, { companyUnderstanding:{ ...data, schemaVersion:2 } });
+    setSaved(true); setTimeout(() => setSaved(false), 2000);
   };
-
-  const removePoint = (key, idx) => {
-    const pts = (data[key].points || []).filter((_, i) => i !== idx);
-    const hl  = (data[key].highlights || []).filter(h => h !== idx).map(h => h > idx ? h - 1 : h);
-    setData(d => ({ ...d, [key]: { ...d[key], points: pts, highlights: hl } }));
-  };
-
-  const updateTagsStr = (key, raw) => {
-    const tags = raw.split(/[\s,]+/).filter(t => t.length > 1 || (t === "#"));
-    updateSection(key, "tags", tags.map(t => t.startsWith("#") ? t : `#${t}`).filter(t => t !== "#"));
-  };
-
-  const handleSave = () => {
-    onUpdate(log.id, { companyUnderstanding: data });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  const generateMotivation = () =>
-    UNDERSTANDING_SECTIONS.map(s => {
-      const sec = data[s.key];
-      if (!sec) return null;
-      const hl  = (sec.highlights || []).map(i => sec.points[i]).filter(Boolean);
-      const pts = (hl.length > 0 ? hl : (sec.points || [])).filter(Boolean);
-      if (!sec.summary && pts.length === 0) return null;
-      return `【${s.label}】\n${sec.summary ? `${sec.summary}\n` : ""}${pts.map(p => `・${p}`).join("\n")}`;
-    }).filter(Boolean).join("\n\n");
-
-  // ── 面接直前モード ─────────────────────────────────────────────
-  if (quickView) {
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center justify-between mb-1">
-          <span className="font-bold text-gray-700 text-sm flex items-center gap-1.5">
-            <Ic n="Zap" size={14} cls="text-amber-500"/>面接直前チェック
-          </span>
-          <button onClick={() => setQuickView(false)}
-            className="text-xs text-blue-600 hover:underline">通常表示に戻る</button>
-        </div>
-        {UNDERSTANDING_SECTIONS.map(s => {
-          const sec = data[s.key] || defaultUnderstandingSection();
-          const hl  = (sec.highlights || []).map(i => sec.points[i]).filter(Boolean);
-          const pts = (hl.length > 0 ? hl : (sec.points || []).slice(0, 2)).filter(Boolean);
-          if (!sec.summary && pts.length === 0) return null;
-          return (
-            <div key={s.key} className={`rounded-xl border ${s.border} ${s.bgLight} p-3`}>
-              <p className={`text-xs font-bold mb-1 ${s.text}`}>{s.label}</p>
-              {sec.summary && <p className="text-xs text-gray-600 italic mb-1.5">{sec.summary}</p>}
-              {pts.map((p, i) => (
-                <p key={i} className="text-xs text-gray-700 leading-relaxed flex gap-1.5">
-                  <span className="text-yellow-400 flex-shrink-0">★</span>{p}
-                </p>
-              ))}
-              {(sec.tags || []).length > 0 && (
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {sec.tags.map(t => (
-                    <span key={t} className={`text-xs px-1.5 py-0.5 rounded-full ${s.tagBg} ${s.tagText}`}>{t}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
-  // ── 通常編集モード ─────────────────────────────────────────────
-  return (
-    <div className="space-y-4">
-      {/* ツールバー */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => setQuickView(true)}
-            className="flex items-center gap-1.5 text-xs bg-amber-50 text-amber-700 border border-amber-200 font-semibold px-3 py-1.5 rounded-lg hover:bg-amber-100 transition-colors">
-            <Ic n="Zap" size={12}/>面接直前モード
-          </button>
-          <button onClick={() => setShowMotivation(v => !v)}
-            className="flex items-center gap-1.5 text-xs bg-purple-50 text-purple-700 border border-purple-200 font-semibold px-3 py-1.5 rounded-lg hover:bg-purple-100 transition-colors">
-            <Ic n="Star" size={12}/>志望動機に変換
-          </button>
-          <button onClick={() => fileInputRef.current && fileInputRef.current.click()}
-            className={`flex items-center gap-1.5 text-xs border font-semibold px-3 py-1.5 rounded-lg transition-colors ${mdImported ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"}`}>
-            <Ic n="Upload" size={12}/>{mdImported ? "取り込み完了 ✓" : "MDを取り込む"}
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".md,text/markdown,text/plain"
-            className="hidden"
-            onChange={handleMdImport}
-          />
-        </div>
-        <button onClick={handleSave}
-          className={`text-xs font-bold px-3 py-1.5 rounded-lg transition-all ${saved ? "bg-emerald-500 text-white" : "bg-blue-600 text-white hover:bg-blue-700"}`}>
-          {saved ? "保存 ✓" : "保存する"}
+  return <div className="space-y-4">
+    <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
+      <div><h2 className="font-bold text-blue-900 flex items-center gap-2"><Ic n="BookOpen" size={17}/>面接準備資料</h2>
+        <p className="text-xs text-blue-600 mt-1">Markdownを直接入力できます。Wordからの貼り付けは見出し・太字・箇条書きをMarkdownへ変換します。</p></div>
+      <div className="flex gap-2">
+        <button onClick={() => fileInputRef.current?.click()} className={`text-xs border font-bold px-3 py-2 rounded-lg ${mdImported ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-white text-gray-700 border-gray-200"}`}>
+          <Ic n="Upload" size={12} cls="inline mr-1"/>{mdImported ? "取り込み完了 ✓" : "MDを取り込む"}
         </button>
+        <input ref={fileInputRef} type="file" accept=".md,.markdown,text/markdown,text/plain" className="hidden" onChange={handleMdImport}/>
+        <button onClick={save} className={`text-xs font-bold px-4 py-2 rounded-lg text-white ${saved ? "bg-emerald-500" : "bg-blue-600"}`}>{saved ? "保存 ✓" : "保存する"}</button>
       </div>
-
-      {/* 志望動機パネル */}
-      {showMotivation && (
-        <div className="fade-in bg-purple-50 border border-purple-200 rounded-xl p-4">
-          <p className="text-xs font-bold text-purple-700 mb-2 flex items-center gap-1.5">
-            <Ic n="Star" size={12}/>志望動機（ドラフト）
-          </p>
-          <pre className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">
-            {generateMotivation() || "各セクションを入力すると志望動機のドラフトが生成されます。"}
-          </pre>
-          <button
-            onClick={() => { navigator.clipboard && navigator.clipboard.writeText(generateMotivation()); }}
-            className="mt-2 text-xs text-purple-600 hover:underline">
-            コピー
-          </button>
-        </div>
-      )}
-
-      {/* セクションカード */}
-      {UNDERSTANDING_SECTIONS.map(s => {
-        const sec        = data[s.key] || defaultUnderstandingSection();
-        const isCollapsed = collapsed[s.key];
-        const tagsStr    = (sec.tags || []).join(" ");
-
-        return (
-          <div key={s.key} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            {/* ヘッダー（折りたたみトグル） */}
-            <button
-              onClick={() => toggleCollapse(s.key)}
-              className={`w-full flex items-center justify-between px-4 py-3 text-left ${s.bgLight} transition-colors`}>
-              <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
-                <span className={`font-bold text-sm ${s.text}`}>{s.label}</span>
-                {(sec.tags || []).map(tag => (
-                  <span key={tag} className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.tagBg} ${s.tagText}`}>{tag}</span>
-                ))}
-              </div>
-              <Ic n="ChevronDown" size={15}
-                cls={`flex-shrink-0 text-gray-400 transition-transform ml-2 ${isCollapsed ? "" : "rotate-180"}`}/>
-            </button>
-
-            {/* 本文 */}
-            {!isCollapsed && (
-              <div className="p-4 space-y-4 fade-in">
-
-                {/* 概要 */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">概要（一言）</label>
-                  <input
-                    type="text"
-                    value={sec.summary || ""}
-                    onChange={e => updateSection(s.key, "summary", e.target.value)}
-                    placeholder="このセクションの要点を一言で..."
-                    className={inCls()}
-                  />
-                </div>
-
-                {/* ポイント */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">
-                    ポイント <span className="normal-case text-gray-300 font-normal">（★ でハイライト）</span>
-                  </label>
-                  <div className="space-y-1.5">
-                    {(sec.points || [""]).map((pt, idx) => {
-                      const isHL = (sec.highlights || []).includes(idx);
-                      return (
-                        <div key={idx} className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors ${isHL ? "bg-yellow-50 border border-yellow-200" : "border border-transparent hover:border-gray-100"}`}>
-                          <button
-                            onClick={() => toggleHighlight(s.key, idx)}
-                            title="ハイライト切り替え"
-                            className={`flex-shrink-0 text-base leading-none transition-colors ${isHL ? "text-yellow-400" : "text-gray-200 hover:text-yellow-300"}`}>
-                            ★
-                          </button>
-                          <input
-                            type="text"
-                            value={pt}
-                            onChange={e => updatePoint(s.key, idx, e.target.value)}
-                            placeholder="ポイントを入力..."
-                            className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-300 focus:outline-none"
-                          />
-                          <button
-                            onClick={() => removePoint(s.key, idx)}
-                            className="flex-shrink-0 text-gray-300 hover:text-red-400 transition-colors p-1">
-                            <Ic n="X" size={12}/>
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <button onClick={() => addPoint(s.key)}
-                    className="mt-2 flex items-center gap-1.5 text-xs text-blue-600 font-semibold hover:text-blue-800">
-                    <Ic n="Plus" size={12}/>ポイントを追加
-                  </button>
-                </div>
-
-                {/* タグ */}
-                <div>
-                  <label className="block text-xs font-bold text-gray-400 mb-1.5 uppercase tracking-wider">タグ</label>
-                  <input
-                    type="text"
-                    value={tagsStr}
-                    onChange={e => updateTagsStr(s.key, e.target.value)}
-                    placeholder="#AI #業務改善（スペース区切り）"
-                    className={inCls()}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* 保存ボタン（下部） */}
-      <button onClick={handleSave}
-        className={`btn-blue w-full py-3 rounded-xl font-bold text-sm shadow-sm transition-all ${saved ? "bg-emerald-500 text-white" : "bg-blue-600 text-white"}`}>
-        {saved ? "保存しました ✓" : "保存する"}
-      </button>
     </div>
-  );
+
+    {data.migratedFrom && <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 flex items-center gap-2">
+      <Ic n="CheckCircle" size={13}/>既存の概要・ポイント・タグを新しい項目へ移行しました。元データも保持されています。
+    </div>}
+
+    {PREPARATION_SECTIONS.map(section => <div key={section.key} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between bg-gray-50 px-4 py-3 border-b border-gray-100">
+        <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2"><Ic n={section.icon} size={15} cls="text-blue-500"/>{section.label}</h3>
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+          <button onClick={() => setPreview(p => ({...p, [section.key]:false}))} className={`px-3 py-1.5 ${!preview[section.key] ? "bg-blue-600 text-white" : "bg-white text-gray-500"}`}>編集</button>
+          <button onClick={() => setPreview(p => ({...p, [section.key]:true}))} className={`px-3 py-1.5 ${preview[section.key] ? "bg-blue-600 text-white" : "bg-white text-gray-500"}`}>プレビュー</button>
+        </div>
+      </div>
+      <div className="p-4">
+        {preview[section.key] ? <div className="min-h-[180px]"><MarkdownPreview value={data[section.key]}/></div> :
+          <textarea value={data[section.key] || ""} onChange={e => setData(d => ({...d, [section.key]:e.target.value}))}
+            onPaste={e => handlePaste(e, section.key)} placeholder={section.placeholder} rows={10}
+            className={inCls() + " min-h-[220px] resize-y font-mono leading-relaxed"}/>}
+      </div>
+    </div>)}
+
+    <PreparationAttachments log={log} onUpdate={onUpdate}/>
+    <button onClick={save} className={`btn-blue w-full py-3 rounded-xl font-bold text-sm text-white ${saved ? "bg-emerald-500" : "bg-blue-600"}`}>{saved ? "保存しました ✓" : "面接準備資料を保存"}</button>
+  </div>;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2526,7 +2402,7 @@ function CompanyUnderstandingTab({ log, onUpdate }) {
 // ══════════════════════════════════════════════════════════════════
 function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDeleteEvent, onDelete, onUpdate, onOpenCriteria }) {
   const [showForm,        setShowForm]        = useState(false);
-  const [activeTab,       setActiveTab]       = useState("timeline"); // timeline | jobdetails | files | memo | understanding
+  const [activeTab,       setActiveTab]       = useState("timeline"); // timeline | jobdetails | files | memo | understanding（面接準備資料）
   const [editingEventId,  setEditingEventId]  = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [expandedMemos,   setExpandedMemos]   = useState(new Set());
@@ -2742,7 +2618,7 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
                 ? "bg-white text-blue-600 shadow-sm"
                 : "text-gray-500 hover:text-gray-700"
             }`}>
-            <Ic n="BookOpen" size={13}/>企業理解
+            <Ic n="BookOpen" size={13}/>面接準備資料
           </button>
         </div>
 
@@ -2896,7 +2772,7 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
           </div>
         )}
 
-        {/* タブコンテンツ: 企業理解 */}
+        {/* タブコンテンツ: 面接準備資料 */}
         {activeTab === "understanding" && (
           <div className="fade-in">
             <CompanyUnderstandingTab log={log} onUpdate={onUpdate}/>
