@@ -440,11 +440,18 @@ const TYPE_DEFS = [
   { key:"未応募",         isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
   { key:"応募中",         isStage:true,  bg:"bg-sky-50",      text:"text-sky-700",     dot:"bg-sky-500",     btn:"border-sky-400 bg-sky-50 text-sky-800"          },
   { key:"カジュアル面談予定", isStage:true, bg:"bg-gray-100", text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"       },
+  { key:"カジュアル面談日程調整中", isStage:true, bg:"bg-gray-100", text:"text-gray-700", dot:"bg-gray-500", btn:"border-gray-400 bg-gray-100 text-gray-800" },
+  { key:"カジュアル面談進行中", isStage:true, bg:"bg-gray-100", text:"text-gray-700", dot:"bg-gray-500", btn:"border-gray-400 bg-gray-100 text-gray-800" },
+  { key:"カジュアル面談結果待ち", isStage:true, bg:"bg-gray-100", text:"text-gray-700", dot:"bg-gray-500", btn:"border-gray-400 bg-gray-100 text-gray-800" },
+  { key:"カジュアル面談後検討中", isStage:true, bg:"bg-gray-100", text:"text-gray-700", dot:"bg-gray-500", btn:"border-gray-400 bg-gray-100 text-gray-800" },
   { key:"カジュアル面談済み", isStage:true, bg:"bg-gray-100", text:"text-gray-700",    dot:"bg-gray-500",    btn:"border-gray-400 bg-gray-100 text-gray-800"       },
   { key:"カジュアル面談", isStage:true,  bg:"bg-gray-100",    text:"text-gray-600",    dot:"bg-gray-400",    btn:"border-gray-300 bg-gray-100 text-gray-700"       },
-  { key:"カジュアル面談進行中", isStage:false, bg:"bg-gray-100", text:"text-gray-700", dot:"bg-gray-500", btn:"border-gray-400 bg-gray-100 text-gray-800" },
   { key:"カジュアル面談後保留", isStage:true, bg:"bg-amber-50", text:"text-amber-700", dot:"bg-amber-400", btn:"border-amber-400 bg-amber-50 text-amber-800" },
   { key:"面談のみ",       isStage:true,  bg:"bg-teal-50",      text:"text-teal-700",   dot:"bg-teal-400",    btn:"border-teal-400 bg-teal-50 text-teal-800"       },
+  { key:"カジュアル面談後応募しない", isStage:true, bg:"bg-teal-50", text:"text-teal-700", dot:"bg-teal-400", btn:"border-teal-400 bg-teal-50 text-teal-800" },
+  { key:"過去面談済み",   isStage:true,  bg:"bg-teal-50",      text:"text-teal-700",   dot:"bg-teal-400",    btn:"border-teal-400 bg-teal-50 text-teal-800"       },
+  { key:"情報収集のみ",   isStage:true,  bg:"bg-teal-50",      text:"text-teal-700",   dot:"bg-teal-400",    btn:"border-teal-400 bg-teal-50 text-teal-800"       },
+  { key:"本選考に進まない", isStage:true, bg:"bg-teal-50",     text:"text-teal-700",   dot:"bg-teal-400",    btn:"border-teal-400 bg-teal-50 text-teal-800"       },
   { key:"他社比較中",     isStage:true,  bg:"bg-amber-50",     text:"text-amber-700",  dot:"bg-amber-400",   btn:"border-amber-400 bg-amber-50 text-amber-800"     },
   { key:"判断保留",       isStage:true,  bg:"bg-amber-50",     text:"text-amber-700",  dot:"bg-amber-400",   btn:"border-amber-400 bg-amber-50 text-amber-800"     },
   { key:"書類提出前保留", isStage:true,  bg:"bg-amber-50",     text:"text-amber-700",  dot:"bg-amber-400",   btn:"border-amber-400 bg-amber-50 text-amber-800"     },
@@ -460,6 +467,7 @@ const TYPE_DEFS = [
   { key:"最終面接結果待ち", isStage:true, bg:"bg-orange-100", text:"text-orange-800",  dot:"bg-orange-500",  btn:"border-orange-500 bg-orange-100 text-orange-900" },
   { key:"最終面接",       isStage:true,  bg:"bg-orange-50",   text:"text-orange-700",  dot:"bg-orange-400",  btn:"border-orange-400 bg-orange-50 text-orange-800"  },
   { key:"オファー面談予定", isStage:true, bg:"bg-emerald-50", text:"text-emerald-700", dot:"bg-emerald-400", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
+  { key:"オファー",       isStage:true,  bg:"bg-emerald-50",  text:"text-emerald-700", dot:"bg-emerald-500", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
   { key:"保留",           isStage:true,  bg:"bg-amber-50",    text:"text-amber-700",   dot:"bg-amber-400",   btn:"border-amber-400 bg-amber-50 text-amber-800"     },
   { key:"内定",           isStage:true,  bg:"bg-emerald-50",  text:"text-emerald-700", dot:"bg-emerald-500", btn:"border-emerald-400 bg-emerald-50 text-emerald-800" },
   { key:"承諾",           isStage:true,  bg:"bg-emerald-100", text:"text-emerald-800", dot:"bg-emerald-600", btn:"border-emerald-500 bg-emerald-100 text-emerald-900" },
@@ -692,7 +700,7 @@ const normalizeStage = (stage) => {
 
 function inferSelectionPhase(stage) {
   if (!stage) return "";
-  if (stage.includes("カジュアル") || stage === "面談のみ") return "カジュアル面談";
+  if (stage.includes("カジュアル") || INFO_ONLY_STAGES.includes(stage) || stage === "面談のみ") return "カジュアル面談";
   if (stage.includes("書類")) return "書類選考";
   if (stage.includes("1次") || stage.includes("一次")) return "1次面接";
   if (stage.includes("2次") || stage.includes("二次")) return "2次面接";
@@ -706,10 +714,10 @@ function inferSelectionPhase(stage) {
 function inferResultDecision(stage) {
   if (!stage) return "";
   if (["保留","カジュアル面談後保留","他社比較中","判断保留","書類提出前保留"].includes(stage)) return "保留";
-  if (stage === "面談のみ") return "面談のみ";
+  if (INFO_ONLY_STAGES.includes(stage)) return "面談のみ";
   if (REJECTION_STAGES.includes(stage) || stage.includes("NG")) return "NG";
   if (WITHDRAWAL_STAGES.includes(stage) || stage.includes("辞退")) return "辞退";
-  if (stage === "承諾" || stage === "内定") return "内定";
+  if (stage === "承諾" || stage === "内定" || stage === "オファー") return "内定";
   if (stage === "終了済み" || stage === "終了") return "終了済み";
   if (CLOSED_REASON_STAGES.includes(stage)) return "終了済み";
   if (stage.includes("結果待ち")) return "結果待ち";
@@ -741,7 +749,10 @@ function getResultLabel(log) { return classifyCompany(log).result; }
 const INTERVIEW_PHASES = ["1次面接","2次面接","最終面接","オファー面談"];
 const TERMINAL_RESULTS = ["辞退","NG","内定","終了済み"];
 const HOLD_STAGES = ["保留","カジュアル面談後保留","他社比較中","判断保留","書類提出前保留"];
-const SELECTION_STAGES = ["書類選考中","書類結果待ち","1次面接予定","1次面接結果待ち","2次面接予定","2次面接結果待ち","最終面接予定","最終面接結果待ち","オファー面談予定"];
+const INFO_ONLY_STAGES = ["面談のみ","カジュアル面談後応募しない","過去面談済み","情報収集のみ","本選考に進まない"];
+const ACTIVE_CASUAL_STAGES = ["カジュアル面談予定","カジュアル面談日程調整中","カジュアル面談進行中","カジュアル面談結果待ち","カジュアル面談後検討中"];
+const SELECTION_INTERVIEW_PHASES = ["1次面接","2次面接","最終面接"];
+const SELECTION_STAGES = ["書類選考中","書類結果待ち","1次面接予定","1次面接結果待ち","2次面接予定","2次面接結果待ち","最終面接予定","最終面接結果待ち"];
 
 function classifyCompany(log) {
   const stage = normalizeStage(log?.stage ?? log?.status);
@@ -752,34 +763,52 @@ function classifyCompany(log) {
 
   // 具体的な旧 stage/status は、矛盾した派生フィールドより優先する。
   if (HOLD_STAGES.includes(stage)) result = "保留";
-  else if (stage === "面談のみ") result = "面談のみ";
+  else if (INFO_ONLY_STAGES.includes(stage)) result = "面談のみ";
   else if (REJECTION_STAGES.includes(stage) || stage.includes("NG")) result = "NG";
   else if (WITHDRAWAL_STAGES.includes(stage) || stage.includes("辞退")) result = "辞退";
-  else if (stage === "内定" || stage === "承諾") result = "内定";
+  else if (stage === "内定" || stage === "承諾" || stage === "オファー") result = "内定";
   else if (["終了済み","終了",...CLOSED_REASON_STAGES].includes(stage)) {
     result = log?.rejectionReason || log?.dismissalReason ? "NG" : (log?.withdrawalReason ? "辞退" : "終了済み");
   } else if (stage.includes("結果待ち")) result = "結果待ち";
 
   const terminal = TERMINAL_RESULTS.includes(result);
   const offerScheduled = stage === "オファー面談予定";
-  const casual = phase === "カジュアル面談" && !terminal;
-  const selection = (SELECTION_STAGES.includes(stage) || phase === "書類選考" || INTERVIEW_PHASES.includes(phase)) && (!terminal || offerScheduled);
+  const casual = isActiveCasualMeeting({ ...log, stage, selectionPhase:phase, resultStatus:result });
   const hold = result === "保留" || HOLD_STAGES.includes(stage);
-  const meetingOnly = stage === "面談のみ" || result === "面談のみ";
+  const meetingOnly = INFO_ONLY_STAGES.includes(stage) || result === "面談のみ";
+  const selection = (SELECTION_STAGES.includes(stage) || phase === "書類選考" || SELECTION_INTERVIEW_PHASES.includes(phase)) && !terminal && !hold && !meetingOnly;
   const progressing = !terminal && !hold && !meetingOnly && (casual || selection || result === "結果待ち");
 
   let display = stage;
-  if (meetingOnly) display = "面談のみ";
+  if (meetingOnly) display = INFO_ONLY_STAGES.includes(stage) ? stage : "面談のみ";
   else if (result === "終了済み") display = "終了済み";
   else if (result === "NG" && !stage.includes("NG") && !REJECTION_STAGES.includes(stage)) display = "NG";
   else if (result === "辞退" && !stage.includes("辞退")) display = "辞退";
-  else if (result === "内定" && !offerScheduled) display = stage === "承諾" ? "承諾" : "内定";
+  else if (result === "内定" && !offerScheduled) display = ["承諾","オファー"].includes(stage) ? stage : "内定";
   else if (hold && !HOLD_STAGES.includes(stage)) display = phase === "カジュアル面談" ? "カジュアル面談後保留" : "保留";
   else if (hold && stage === "保留" && phase === "カジュアル面談") display = "カジュアル面談後保留";
   else if (!display || display === "応募中") display = phase ? `${phase}${result === "結果待ち" ? "結果待ち" : "進行中"}` : (result || "進行中");
   else if (stage === "カジュアル面談" && result === "進行中") display = "カジュアル面談進行中";
 
   return { stage, phase, result, display, terminal, progressing, casual, selection, hold, meetingOnly, offerScheduled };
+}
+
+function isActiveCasualMeeting(log) {
+  const stage = normalizeStage(log?.stage ?? log?.status);
+  const result = log?.resultStatus || log?.resultDecision || inferResultDecision(stage);
+  if (HOLD_STAGES.includes(stage) || INFO_ONLY_STAGES.includes(stage) || TERMINAL_RESULTS.includes(result)) return false;
+  if (ACTIVE_CASUAL_STAGES.includes(stage)) return true;
+  // 旧「カジュアル面談」は進行中として扱うが、「面談済み」は履歴扱いにする。
+  return stage === "カジュアル面談" && ["進行中","結果待ち","通過"].includes(result);
+}
+
+function isPausedAfterCasualMeeting(log) {
+  const c = classifyCompany(log);
+  return c.display === "カジュアル面談後保留";
+}
+
+function isInfoOnlyMeeting(log) {
+  return classifyCompany(log).meetingOnly;
 }
 
 function isActiveLog(log) {
@@ -792,7 +821,7 @@ function matchesDashboardFilter(log, filter) {
   if (filter === "進行中") return c.progressing;
   if (filter === "カジュアル面談") return c.casual;
   if (filter === "書類選考中") return c.phase === "書類選考" && !c.terminal && !c.hold && c.result !== "結果待ち";
-  if (filter === "面接中") return INTERVIEW_PHASES.includes(c.phase) && !c.terminal && !c.hold && c.result !== "結果待ち";
+  if (filter === "面接中") return SELECTION_INTERVIEW_PHASES.includes(c.phase) && !c.terminal && !c.hold && c.result !== "結果待ち";
   if (filter === "結果待ち") return c.result === "結果待ち";
   if (filter === "カジュアル面談後保留") return c.display === "カジュアル面談後保留";
   if (filter === "面談のみ") return c.meetingOnly;
