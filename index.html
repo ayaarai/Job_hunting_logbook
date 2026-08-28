@@ -156,8 +156,9 @@ function buildSelectionProgress(logs) {
     media: log.media,
     status: log.stage,
     jobPosition: log.jobPosition,
-    selectionPhase: log.selectionPhase,
-    resultDecision: log.resultDecision,
+    selectionPhase: getLogSelectionPhase(log),
+    resultStatus: getLogResultDecision(log),
+    resultDecision: getLogResultDecision(log),
     withdrawalReason: log.withdrawalReason,
     rejectionReason: log.rejectionReason,
     statusNote: log.statusNote,
@@ -220,24 +221,39 @@ function exportSelectionProgressJson(logs) {
 
 function exportSelectionProgressBackupCsv(logs) {
   const headers = [
-    "company","status","jobPosition","selectionPhase","resultDecision","priority","route","agent","media","withdrawalReason","rejectionReason","statusNote","axisMatch","techExpectation","improvementFit",
+    "企業名","職種","応募経路","媒体","選考フェーズ","現在の状況","結果・判断","辞退理由","見送り理由","保留理由","メモ",
+    "company","status","jobPosition","selectionPhase","resultStatus","resultDecision","priority","route","agent","media","withdrawalReason","rejectionReason","statusNote","axisMatch","techExpectation","improvementFit",
     "concerns","nextQuestions","postMeetingDecision","decisionReason","holdReason","holdDate","holdReviewDate","holdCategory",
     "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles","createdAt","updatedAt"
   ];
-  const rows = buildSelectionProgress(logs).map(item => ({
+  const rows = logs.map(log => {
+    const item = buildSelectionProgress([log])[0];
+    return {
+    "企業名": log.company || "",
+    "職種": log.jobPosition || "",
+    "応募経路": normalizeExternalRoute(log.route),
+    "媒体": log.media || "",
+    "選考フェーズ": getLogSelectionPhase(log),
+    "現在の状況": buildMaynaviStatusText(log),
+    "結果・判断": getLogResultDecision(log),
+    "辞退理由": log.withdrawalReason || "",
+    "見送り理由": log.rejectionReason || log.dismissalReason || "",
+    "保留理由": log.holdReason || "",
+    "メモ": _stripHtml(log.memo),
     ...item,
     timeline: item.timeline.map(ev => `${ev.date} ${ev.type}${ev.memo ? `: ${ev.memo}` : ""}`).join(" / "),
     materialFiles: item.materialFiles.map(f => `${f.name}${f.label ? ` (${f.label})` : ""}`).join(" / "),
-  }));
+  }});
   downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-backup-${todayStamp()}.csv`);
 }
 
 function buildMaynaviStatusText(log) {
   const stage = log.stage || "";
-  const decision = log.resultDecision || inferResultDecision(stage);
-  const phase = log.selectionPhase || inferSelectionPhase(stage);
+  const decision = getLogResultDecision(log);
+  const phase = getLogSelectionPhase(log);
   if (decision === "保留") {
-    return log.holdReason ? `${log.holdReason}のため保留中` : "保留中";
+    const prefix = phase ? `${phase}・` : "";
+    return log.holdReason ? `${prefix}${log.holdReason}のため保留中` : `${prefix}保留中`;
   }
   if (decision === "辞退") {
     if (stage === "カジュアル面談後辞退") return "カジュアル面談後、応募は見送り";
@@ -255,42 +271,39 @@ function buildMaynaviStatusText(log) {
     if (stage.includes("最終")) return "最終面接NG";
     return stage || "NG";
   }
-  if (stage) return stage;
+  if (decision === "内定") return "内定";
   if (decision === "結果待ち" && phase) return `${phase}結果待ち`;
+  if (decision === "通過" && phase) return `${phase}通過`;
   if (decision === "進行中" && phase) return `${phase}進行中`;
-  return decision || phase || "";
+  return stage || decision || phase || "";
 }
 
 function exportMaynaviSelectionStatusCsv(logs) {
   const headers = [
     "企業名",
-    "職種・応募ポジション",
+    "職種",
     "応募経路",
     "媒体",
     "現在の状況",
     "選考フェーズ",
     "結果・判断",
-    "面談・面接日",
-    "次回予定日",
     "辞退理由",
     "見送り理由",
     "保留理由",
-    "補足メモ",
+    "メモ",
   ];
   const rows = logs.map(log => ({
     "企業名": log.company || "",
-    "職種・応募ポジション": log.jobPosition || "",
+    "職種": log.jobPosition || "",
     "応募経路": normalizeExternalRoute(log.route),
     "媒体": log.media || "",
     "現在の状況": buildMaynaviStatusText(log),
-    "選考フェーズ": log.selectionPhase || inferSelectionPhase(log.stage),
-    "結果・判断": log.resultDecision || inferResultDecision(log.stage),
-    "面談・面接日": log.interviewDate || "",
-    "次回予定日": getNextDate(log),
+    "選考フェーズ": getLogSelectionPhase(log),
+    "結果・判断": getLogResultDecision(log),
     "辞退理由": log.withdrawalReason || "",
     "見送り理由": log.rejectionReason || log.dismissalReason || "",
     "保留理由": log.holdReason || "",
-    "補足メモ": log.statusNote || "",
+    "メモ": [log.statusNote, _stripHtml(log.memo)].filter(Boolean).join("\n"),
   }));
   downloadCsvWithBom(buildCsv(headers, rows), `maynavi-selection-status-${todayStamp()}.csv`);
 }
@@ -298,10 +311,17 @@ function exportMaynaviSelectionStatusCsv(logs) {
 function exportSelectionProgressExternalCsv(logs) {
   const headers = [
     "企業名",
-    "現在の状況",
-    "志望度・優先度",
+    "職種",
     "応募経路",
     "媒体",
+    "選考フェーズ",
+    "現在の状況",
+    "結果・判断",
+    "辞退理由",
+    "見送り理由",
+    "保留理由",
+    "メモ",
+    "志望度・優先度",
     "担当エージェント",
     "転職軸との一致度",
     "技術・業務内容への期待",
@@ -310,15 +330,21 @@ function exportSelectionProgressExternalCsv(logs) {
     "次回確認したいこと",
     "面談後メモ",
     "応募判断",
-    "保留理由",
     "最終更新日",
   ];
   const rows = logs.map(log => ({
     "企業名": log.company || "",
-    "現在の状況": log.stage || "",
-    "志望度・優先度": log.priority || "",
+    "職種": log.jobPosition || "",
     "応募経路": normalizeExternalRoute(log.route),
     "媒体": log.media || "",
+    "選考フェーズ": getLogSelectionPhase(log),
+    "現在の状況": buildMaynaviStatusText(log),
+    "結果・判断": getLogResultDecision(log),
+    "辞退理由": log.withdrawalReason || "",
+    "見送り理由": log.rejectionReason || log.dismissalReason || "",
+    "保留理由": log.holdReason || "",
+    "メモ": [log.statusNote, _stripHtml(log.memo)].filter(Boolean).join("\n"),
+    "志望度・優先度": log.priority || "",
     "担当エージェント": log.agent || "",
     "転職軸との一致度": log.axisMatch || "",
     "技術・業務内容への期待": log.techExpectation || "",
@@ -327,7 +353,6 @@ function exportSelectionProgressExternalCsv(logs) {
     "次回確認したいこと": log.nextQuestion || log.nextQuestions || "",
     "面談後メモ": log.postMeeting || log.decisionReason || "",
     "応募判断": log.decisionReach || log.postMeetingDecision || "",
-    "保留理由": log.holdReason || "",
     "最終更新日": getLastUpdatedDate(log),
   }));
   downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-external-${todayStamp()}.csv`);
@@ -420,9 +445,9 @@ const isHoldStage = (stage) => stage === HOLD_STAGE;
 const isActiveStage = (stage) => stage !== "内定" && !CLOSED_STAGES.includes(stage) && !isHoldStage(stage);
 const isClosedStage = (stage) => CLOSED_STAGES.includes(stage);
 
-const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","1次面接","2次面接","最終面接","オファー面談","内定","終了"];
-const RESULT_DECISIONS = ["進行中","予定","結果待ち","通過","NG","辞退","保留","終了"];
-const STATUS_CATEGORY_FILTERS = ["すべて","進行中","保留中","終了済み"];
+const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","1次面接","2次面接","最終面接","オファー面談"];
+const RESULT_DECISIONS = ["進行中","結果待ち","通過","NG","辞退","保留","内定"];
+const DASHBOARD_FILTERS = ["すべて","進行中","カジュアル面談","書類選考中","面接中","結果待ち","保留","辞退","NG","内定"];
 const WITHDRAWAL_STAGES = ["カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","辞退"];
 const REJECTION_STAGES = ["書類NG","1次面接NG","2次面接NG","最終面接NG","お見送り"];
 const CLOSED_REASON_STAGES = ["求人クローズ","連絡終了","その他終了"];
@@ -608,6 +633,7 @@ const createLogDefaults = () => ({
   jobPosition:    "",
   selectionPhase: "",
   resultDecision: "",
+  resultStatus:   "",
   withdrawalReason:"",
   rejectionReason:"",
   statusNote:     "",
@@ -691,8 +717,7 @@ function inferSelectionPhase(stage) {
   if (stage.includes("2次") || stage.includes("二次")) return "2次面接";
   if (stage.includes("最終")) return "最終面接";
   if (stage.includes("オファー")) return "オファー面談";
-  if (stage.includes("内定") || stage === "承諾") return "内定";
-  if (isClosedStage(stage) || stage.includes("終了") || stage.includes("辞退") || stage.includes("NG")) return "終了";
+  if (stage.includes("内定") || stage === "承諾") return "オファー面談";
   if (stage === "未応募") return "未応募";
   return "";
 }
@@ -702,9 +727,9 @@ function inferResultDecision(stage) {
   if (isHoldStage(stage)) return "保留";
   if (REJECTION_STAGES.includes(stage) || stage.includes("NG")) return "NG";
   if (WITHDRAWAL_STAGES.includes(stage) || stage.includes("辞退")) return "辞退";
-  if (stage === "承諾" || CLOSED_REASON_STAGES.includes(stage)) return "終了";
+  if (stage === "承諾" || stage === "内定") return "内定";
+  if (CLOSED_REASON_STAGES.includes(stage) || stage.includes("終了")) return "NG";
   if (stage.includes("結果待ち")) return "結果待ち";
-  if (stage === "内定") return "通過";
   return "進行中";
 }
 
@@ -723,7 +748,25 @@ function getLogSelectionPhase(log) {
 }
 
 function getLogResultDecision(log) {
-  return log.resultDecision || inferResultDecision(log.stage);
+  return log.resultStatus || log.resultDecision || inferResultDecision(log.stage);
+}
+
+const INTERVIEW_PHASES = ["1次面接","2次面接","最終面接","オファー面談"];
+const TERMINAL_RESULTS = ["辞退","NG","内定"];
+
+function isActiveLog(log) {
+  return !TERMINAL_RESULTS.includes(getLogResultDecision(log));
+}
+
+function matchesDashboardFilter(log, filter) {
+  if (filter === "すべて") return true;
+  const phase = getLogSelectionPhase(log);
+  const result = getLogResultDecision(log);
+  if (filter === "進行中") return isActiveLog(log) && result !== "保留";
+  if (filter === "カジュアル面談") return phase === "カジュアル面談";
+  if (filter === "書類選考中") return phase === "書類選考" && !TERMINAL_RESULTS.includes(result);
+  if (filter === "面接中") return INTERVIEW_PHASES.includes(phase) && !TERMINAL_RESULTS.includes(result);
+  return result === filter;
 }
 
 function getInterviewNotificationPhase(log) {
@@ -755,18 +798,22 @@ function interviewNotificationLabel(phase) {
 }
 
 function getStatusCategory(log) {
-  const stage = log.stage || "";
-  const decision = log.resultDecision || inferResultDecision(stage);
-  if (decision === "保留" || isHoldStage(stage)) return "保留中";
-  if (decision === "NG" || decision === "辞退" || decision === "終了" || isClosedStage(stage)) return "終了済み";
-  return "進行中";
+  return getLogResultDecision(log);
 }
 
 const normalizeLog = (log) => {
   const source = log || {};
-  const normalizedStage = normalizeStage(source.stage ?? source.status);
+  let normalizedStage = normalizeStage(source.stage ?? source.status);
   const holdReason = source.holdReason ?? source.pendingReason ?? source.pauseReason ?? "";
   const rejectionReason = source.rejectionReason ?? source.dismissalReason ?? "";
+  const legacyDecision = source.resultStatus ?? source.resultDecision;
+  let resultStatus = RESULT_DECISIONS.includes(legacyDecision) ? legacyDecision : inferResultDecision(normalizedStage);
+  if (legacyDecision === "予定") resultStatus = "進行中";
+  if (legacyDecision === "終了") resultStatus = rejectionReason || source.dismissalReason ? "NG" : "辞退";
+  if (["終了済み","終了","その他終了","連絡終了","求人クローズ"].includes(normalizedStage)) {
+    resultStatus = rejectionReason || source.dismissalReason ? "NG" : "辞退";
+  }
+  if (resultStatus === "終了") resultStatus = rejectionReason || source.dismissalReason ? "NG" : "辞退";
   return {
     ...createLogDefaults(),
     ...cloneData(source),
@@ -775,7 +822,8 @@ const normalizeLog = (log) => {
     jobPosition: source.jobPosition ?? source.position ?? source.role ?? "",
     route: normalizeRoute(source.route),
     selectionPhase: SELECTION_PHASES.includes(source.selectionPhase) ? source.selectionPhase : inferSelectionPhase(normalizedStage),
-    resultDecision: RESULT_DECISIONS.includes(source.resultDecision) ? source.resultDecision : inferResultDecision(normalizedStage),
+    resultStatus,
+    resultDecision: resultStatus,
     withdrawalReason: source.withdrawalReason ?? "",
     rejectionReason,
     statusNote: source.statusNote ?? source.externalNote ?? "",
@@ -1423,8 +1471,7 @@ function exportLogs(logs) {
 
 function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
   const [search,          setSearch]          = useState("");
-  const [filterStage,     setFilterStage]     = useState("すべて");
-  const [filterStatusCategory, setFilterStatusCategory] = useState("すべて");
+  const [dashboardFilter, setDashboardFilter] = useState("すべて");
   const fileInputRef = React.useRef(null);
 
   const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
@@ -1454,18 +1501,17 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
 
   const filtered = logs.filter(l => {
     const q = search.toLowerCase();
-    const ms = !q || [l.company, l.jobPosition, l.stage, l.route, l.agent, l.media, l.selectionPhase, l.resultDecision, l.statusNote, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
-    const mf = filterStage==="すべて" || l.stage===filterStage;
-    const mc = filterStatusCategory==="すべて" || getStatusCategory(l)===filterStatusCategory;
-    return ms && mf && mc;
+    const ms = !q || [l.company, l.jobPosition, l.stage, l.route, l.agent, l.media, getLogSelectionPhase(l), getLogResultDecision(l), l.statusNote, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
+    return ms && matchesDashboardFilter(l, dashboardFilter);
   });
 
   const stats = [
-    { label:"進行中",   count:logs.filter(l=>isActiveStage(l.stage)).length, color:"text-blue-600", bg:"bg-blue-50 border-blue-100"       },
-    { label:"保留",     count:logs.filter(l=>getStatusCategory(l)==="保留中").length, color:"text-amber-600", bg:"bg-amber-50 border-amber-100"     },
-    { label:"内定",     count:logs.filter(l=>l.stage==="内定").length,            color:"text-emerald-600", bg:"bg-emerald-50 border-emerald-100" },
-    { label:"NG",       count:logs.filter(l=>(l.resultDecision || inferResultDecision(l.stage))==="NG").length, color:"text-red-500", bg:"bg-red-50 border-red-100" },
-    { label:"終了済み", count:logs.filter(l=>getStatusCategory(l)==="終了済み").length, color:"text-stone-600", bg:"bg-stone-100 border-stone-200" },
+    { label:"進行中", count:logs.filter(isActiveLog).length, color:"text-blue-600", bg:"bg-blue-50 border-blue-100" },
+    { label:"カジュアル面談", count:logs.filter(l=>getLogSelectionPhase(l)==="カジュアル面談" && isActiveLog(l)).length, color:"text-slate-600", bg:"bg-slate-50 border-slate-200" },
+    { label:"選考中", count:logs.filter(l=>["書類選考",...INTERVIEW_PHASES].includes(getLogSelectionPhase(l)) && isActiveLog(l)).length, color:"text-purple-600", bg:"bg-purple-50 border-purple-100" },
+    { label:"辞退", count:logs.filter(l=>getLogResultDecision(l)==="辞退").length, color:"text-stone-600", bg:"bg-stone-100 border-stone-200" },
+    { label:"NG", count:logs.filter(l=>getLogResultDecision(l)==="NG").length, color:"text-red-500", bg:"bg-red-50 border-red-100" },
+    { label:"内定", count:logs.filter(l=>getLogResultDecision(l)==="内定").length, color:"text-emerald-600", bg:"bg-emerald-50 border-emerald-100" },
   ];
 
   return (
@@ -1512,7 +1558,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
           {/* メインコンテンツ */}
           <div className="flex-1 min-w-0">
             {/* 統計カード */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 mb-4">
               {stats.map(s=>(
                 <div key={s.label} className={`border rounded-xl p-2.5 text-center ${s.bg}`}>
                   <div className={`text-xl font-bold ${s.color}`}>{s.count}</div>
@@ -1536,23 +1582,13 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
               )}
             </div>
 
-            {/* フェーズフィルター */}
+            {/* フェーズと結果を統合したフィルター */}
             <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-              {["すべて",...STAGES].map(s=>(
-                <button key={s} onClick={()=>setFilterStage(s)}
+              {DASHBOARD_FILTERS.map(s=>(
+                <button key={s} onClick={()=>setDashboardFilter(s)}
                   className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
-                    filterStage===s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
+                    dashboardFilter===s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
                   }`}>{s}</button>
-              ))}
-            </div>
-
-            {/* 状態カテゴリフィルター */}
-            <div className="flex gap-2 mt-2 overflow-x-auto pb-1 no-scrollbar">
-              {STATUS_CATEGORY_FILTERS.map(c=>(
-                <button key={c} onClick={()=>setFilterStatusCategory(c)}
-                  className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
-                    filterStatusCategory===c ? "bg-slate-700 text-white border-slate-700" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
-                  }`}>{c==="すべて" ? "状態: すべて" : c}</button>
               ))}
             </div>
 
@@ -1565,8 +1601,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                   <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                     <Ic n="Building" size={30} cls="text-gray-300"/>
                   </div>
-                  <p className="text-gray-400 text-sm">{search||filterStage!=="すべて"||filterStatusCategory!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
-                  {!search && filterStage==="すべて" && filterStatusCategory==="すべて" && (
+                  <p className="text-gray-400 text-sm">{search||dashboardFilter!=="すべて" ? "該当する記録がありません" : "まだ記録がありません"}</p>
+                  {!search && dashboardFilter==="すべて" && (
                     <button onClick={onAdd} className="mt-3 text-blue-600 text-sm font-semibold hover:underline">最初の企業を追加する →</button>
                   )}
                 </div>
@@ -1601,8 +1637,8 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                   <div className="mt-2 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
                     <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-600">
                       <span className="font-semibold text-gray-700">{buildMaynaviStatusText(log)}</span>
-                      {(log.selectionPhase || inferSelectionPhase(log.stage)) && <span>フェーズ: {log.selectionPhase || inferSelectionPhase(log.stage)}</span>}
-                      {(log.resultDecision || inferResultDecision(log.stage)) && <span>判断: {log.resultDecision || inferResultDecision(log.stage)}</span>}
+                      {getLogSelectionPhase(log) && <span>フェーズ: {getLogSelectionPhase(log)}</span>}
+                      {getLogResultDecision(log) && <span>判断: {getLogResultDecision(log)}</span>}
                     </div>
                     {log.statusNote && <p className="mt-1 text-xs text-gray-500 line-clamp-2 whitespace-pre-wrap">{log.statusNote}</p>}
                   </div>
@@ -1615,7 +1651,7 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
                   )}
 
                   {/* 保留理由 */}
-                  {log.stage===HOLD_STAGE && (
+                  {getLogResultDecision(log)==="保留" && (
                     <div className="mt-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-amber-700 font-semibold">
                         <span className="flex items-center gap-1.5"><Ic n="PauseCircle" size={12}/>保留</span>
@@ -2334,7 +2370,7 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
   });
   const events = [...(log.events||[])].sort((a,b)=>a.date.localeCompare(b.date));
   const updateStatus = (patch) => onUpdate(log.id, patch);
-  const currentDecision = log.resultDecision || inferResultDecision(log.stage);
+  const currentDecision = getLogResultDecision(log);
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -2400,14 +2436,14 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
                 </select>
               </FormField>
               <FormField label="結果・判断">
-                <select value={currentDecision || ""} onChange={e => updateStatus({ resultDecision:e.target.value, stage:e.target.value==="保留" ? HOLD_STAGE : log.stage })} className={inCls()}>
+                <select value={currentDecision || ""} onChange={e => updateStatus({ resultStatus:e.target.value, resultDecision:e.target.value })} className={inCls()}>
                   <option value="">未設定</option>
                   {RESULT_DECISIONS.map(d=><option key={d} value={d}>{d}</option>)}
                 </select>
               </FormField>
             </div>
             <FormField label="現在の状況">
-              <select value={log.stage || ""} onChange={e => updateStatus({ stage:e.target.value, selectionPhase:inferSelectionPhase(e.target.value), resultDecision:inferResultDecision(e.target.value) })} className={inCls()}>
+              <select value={log.stage || ""} onChange={e => { const resultStatus=inferResultDecision(e.target.value); updateStatus({ stage:e.target.value, selectionPhase:inferSelectionPhase(e.target.value), resultStatus, resultDecision:resultStatus }); }} className={inCls()}>
                 {STAGES.map(s=><option key={s} value={s}>{s}</option>)}
               </select>
             </FormField>
@@ -2430,7 +2466,7 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
             {currentDecision==="保留" && (
               <div className="fade-in">
                 <FormField label="保留理由">
-                  <textarea value={log.holdReason || ""} onChange={e => updateStatus({ holdReason:e.target.value, stage:log.stage || HOLD_STAGE })}
+                  <textarea value={log.holdReason || ""} onChange={e => updateStatus({ holdReason:e.target.value })}
                     rows={3} className={inCls()+" resize-y"} placeholder="保留理由を入力..." />
                 </FormField>
               </div>
