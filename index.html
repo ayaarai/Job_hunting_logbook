@@ -425,7 +425,7 @@ const isClosedStage = (stage) => CLOSED_STAGES.includes(stage);
 
 const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","一次面接","二次面接","最終面接","オファー面談","内定","終了"];
 const RESULT_DECISIONS = ["進行中","結果待ち","通過","保留","辞退","NG","内定","終了"];
-const DASHBOARD_FILTERS = ["すべて","進行中","カジュアル面談","選考中","保留","辞退","NG","内定"];
+const DASHBOARD_FILTERS = ["すべて","カジュアル面談","書類選考","面接中","保留","辞退","NG","内定"];
 const WITHDRAWAL_STAGES = ["カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","辞退"];
 const REJECTION_STAGES = ["書類NG","1次面接NG","2次面接NG","最終面接NG","企業側見送り","その他NG","お見送り","見送り"];
 const CLOSED_REASON_STAGES = ["求人クローズ","連絡終了","その他終了"];
@@ -794,8 +794,22 @@ function classifyCompany(log) {
   const progressing = !terminal && !hold && !meetingOnly && (casual || selection || result === "結果待ち");
 
   const display = generateCurrentStatus(phase, result);
+  const dashboardCategory = getDashboardCategory({ phase, result, hold, terminal, meetingOnly });
 
-  return { stage, phase, result, display, terminal, progressing, casual, selection, hold, meetingOnly, offerScheduled };
+  return { stage, phase, result, display, dashboardCategory, terminal, progressing, casual, selection, hold, meetingOnly, offerScheduled };
+}
+
+function getDashboardCategory({ phase, result, hold, terminal, meetingOnly }) {
+  if (hold || result === "保留") return "保留";
+  if (result === "辞退") return "辞退";
+  if (result === "NG") return "NG";
+  if (result === "内定") return "内定";
+  if (terminal || meetingOnly) return "";
+  if (phase === "内定") return "内定";
+  if (phase === "カジュアル面談") return "カジュアル面談";
+  if (phase === "書類選考") return "書類選考";
+  if ([...SELECTION_INTERVIEW_PHASES,"オファー面談"].includes(phase)) return "面接中";
+  return "";
 }
 
 function generateCurrentStatus(phase, result) {
@@ -841,13 +855,7 @@ function isActiveLog(log) {
 
 function matchesDashboardFilter(log, filter) {
   if (filter === "すべて") return true;
-  const c = classifyCompany(log);
-  if (filter === "進行中") return c.progressing;
-  if (filter === "カジュアル面談") return c.casual;
-  if (filter === "選考中") return c.selection;
-  if (filter === "保留") return c.hold;
-  if (filter === "内定") return c.result === "内定" || c.offerScheduled;
-  return c.result === filter;
+  return classifyCompany(log).dashboardCategory === filter;
 }
 
 function getDashboardStatuses(log) {
@@ -1596,9 +1604,9 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
   });
 
   const stats = [
-    { label:"進行中", count:logs.filter(l=>matchesDashboardFilter(l,"進行中")).length, color:"text-blue-600", bg:"bg-blue-50 border-blue-100" },
     { label:"カジュアル面談", count:logs.filter(l=>matchesDashboardFilter(l,"カジュアル面談")).length, color:"text-slate-600", bg:"bg-slate-50 border-slate-200" },
-    { label:"選考中", count:logs.filter(l=>classifyCompany(l).selection).length, color:"text-purple-600", bg:"bg-purple-50 border-purple-100" },
+    { label:"書類選考", count:logs.filter(l=>matchesDashboardFilter(l,"書類選考")).length, color:"text-blue-600", bg:"bg-blue-50 border-blue-100" },
+    { label:"面接中", count:logs.filter(l=>matchesDashboardFilter(l,"面接中")).length, color:"text-purple-600", bg:"bg-purple-50 border-purple-100" },
     { label:"保留", count:logs.filter(l=>matchesDashboardFilter(l,"保留")).length, color:"text-amber-600", bg:"bg-amber-50 border-amber-100" },
     { label:"辞退", count:logs.filter(l=>matchesDashboardFilter(l,"辞退")).length, color:"text-stone-600", bg:"bg-stone-100 border-stone-200" },
     { label:"NG", count:logs.filter(l=>matchesDashboardFilter(l,"NG")).length, color:"text-red-500", bg:"bg-red-50 border-red-100" },
