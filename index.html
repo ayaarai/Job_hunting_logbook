@@ -426,6 +426,7 @@ const isClosedStage = (stage) => CLOSED_STAGES.includes(stage);
 const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","一次面接","二次面接","最終面接","オファー面談","内定","終了"];
 const RESULT_DECISIONS = ["進行中","結果待ち","通過","保留","辞退","NG","内定","終了"];
 const DASHBOARD_FILTERS = ["すべて","カジュアル面談","書類選考","面接中","保留","辞退","NG","内定"];
+const NG_PHASE_FILTERS = ["すべて","書類","一次面接","二次面接","最終面接","カジュアル面談","その他"];
 const WITHDRAWAL_STAGES = ["カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","辞退"];
 const REJECTION_STAGES = ["書類NG","1次面接NG","2次面接NG","最終面接NG","企業側見送り","その他NG","お見送り","見送り"];
 const CLOSED_REASON_STAGES = ["求人クローズ","連絡終了","その他終了"];
@@ -856,6 +857,44 @@ function isActiveLog(log) {
 function matchesDashboardFilter(log, filter) {
   if (filter === "すべて") return true;
   return classifyCompany(log).dashboardCategory === filter;
+}
+
+// NG の判定も一覧・集計・CSV と同じ正規化済みのフェーズ/結果を使う。
+// 旧 status（書類NG、1次面接NG、見送り等）は classifyCompany 内で変換される。
+function getNgPhase(log) {
+  const { phase, result } = classifyCompany(log);
+  if (result !== "NG") return "";
+  if (phase === "書類選考") return "書類";
+  if (["一次面接","二次面接","最終面接","カジュアル面談"].includes(phase)) return phase;
+  return "その他";
+}
+
+function getNgPhaseCounts(logs) {
+  const counts = Object.fromEntries(NG_PHASE_FILTERS.map(phase => [phase, 0]));
+  logs.forEach(log => {
+    const phase = getNgPhase(log);
+    if (!phase) return;
+    counts["すべて"] += 1;
+    counts[phase] += 1;
+  });
+  return counts;
+}
+
+function matchesTextSearch(log, search) {
+  const query = String(search || "").trim().toLocaleLowerCase("ja");
+  if (!query) return true;
+  return [
+    log.company, log.jobPosition, log.stage, log.route, log.agent, log.media,
+    getLogSelectionPhase(log), getLogResultDecision(log), log.statusNote,
+    log.holdReason, log.holdCategory,
+  ].some(value => String(value || "").toLocaleLowerCase("ja").includes(query));
+}
+
+function getFilteredCompanies(logs, { search = "", dashboardFilter = "すべて", ngPhase = "すべて" } = {}) {
+  return logs.filter(log => {
+    if (!matchesTextSearch(log, search) || !matchesDashboardFilter(log, dashboardFilter)) return false;
+    return dashboardFilter !== "NG" || ngPhase === "すべて" || getNgPhase(log) === ngPhase;
+  });
 }
 
 function getDashboardStatuses(log) {
@@ -1570,6 +1609,7 @@ function exportLogs(logs) {
 function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
   const [search,          setSearch]          = useState("");
   const [dashboardFilter, setDashboardFilter] = useState("すべて");
+  const [ngPhaseFilter,   setNgPhaseFilter]   = useState("すべて");
   const fileInputRef = React.useRef(null);
 
   const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
@@ -1597,11 +1637,15 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
     e.target.value = "";
   };
 
-  const filtered = logs.filter(l => {
-    const q = search.toLowerCase();
-    const ms = !q || [l.company, l.jobPosition, l.stage, l.route, l.agent, l.media, getLogSelectionPhase(l), getLogResultDecision(l), l.statusNote, l.holdReason, l.holdCategory].some(v => v && v.toLowerCase().includes(q));
-    return ms && matchesDashboardFilter(l, dashboardFilter);
-  });
+  const searchMatchedLogs = logs.filter(log => matchesTextSearch(log, search));
+  const ngPhaseCounts = getNgPhaseCounts(searchMatchedLogs);
+  const filtered = getFilteredCompanies(logs, { search, dashboardFilter, ngPhase:ngPhaseFilter });
+
+  const selectDashboardFilter = (filter) => {
+    setDashboardFilter(filter);
+    // NG を離れた後に再度開いた場合も、必ず全件から始める。
+    setNgPhaseFilter("すべて");
+  };
 
   const stats = [
     { label:"カジュアル面談", count:logs.filter(l=>matchesDashboardFilter(l,"カジュアル面談")).length, color:"text-slate-600", bg:"bg-slate-50 border-slate-200" },
@@ -1684,14 +1728,36 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
             {/* フェーズと結果を統合したフィルター */}
             <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
               {DASHBOARD_FILTERS.map(s=>(
-                <button key={s} onClick={()=>setDashboardFilter(s)}
+                <button key={s} onClick={()=>selectDashboardFilter(s)}
                   className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
                     dashboardFilter===s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
                   }`}>{s}</button>
               ))}
             </div>
 
-            <p className="text-xs text-gray-400 font-medium mt-2 mb-3">{filtered.length}件</p>
+            {dashboardFilter === "NG" && (
+              <div className="fade-in mt-1 mb-2 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="flex-shrink-0 text-xs font-bold text-red-700">NG内訳</span>
+                  <div className="hidden sm:flex gap-1.5 overflow-x-auto no-scrollbar">
+                    {NG_PHASE_FILTERS.map(phase => (
+                      <button key={phase} onClick={()=>setNgPhaseFilter(phase)}
+                        className={`flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full border transition-all ${
+                          ngPhaseFilter===phase ? "bg-red-600 text-white border-red-600" : "bg-white text-gray-600 border-red-100 hover:border-red-300"
+                        }`}>
+                        {phase} <span className={ngPhaseFilter===phase ? "text-red-100" : "text-gray-400"}>{ngPhaseCounts[phase]}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <select value={ngPhaseFilter} onChange={e=>setNgPhaseFilter(e.target.value)}
+                    aria-label="NG内訳" className="sm:hidden flex-1 min-w-0 bg-white border border-red-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-gray-700 focus:outline-none focus:ring-2 focus:ring-red-400">
+                    {NG_PHASE_FILTERS.map(phase => <option key={phase} value={phase}>{phase} {ngPhaseCounts[phase]}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            <p className="text-xs text-gray-500 font-semibold mt-2 mb-3" aria-live="polite">該当 {filtered.length}件</p>
 
             {/* カードリスト */}
             <div className="space-y-3">
