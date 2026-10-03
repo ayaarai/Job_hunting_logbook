@@ -430,7 +430,7 @@ const isClosedStage = (stage) => CLOSED_STAGES.includes(stage);
 
 const SELECTION_PHASES = ["未応募","カジュアル面談","書類選考","一次面接","二次面接","最終面接","オファー面談","内定","終了"];
 const RESULT_DECISIONS = ["進行中","結果待ち","通過","保留","辞退","NG","内定","終了"];
-const DASHBOARD_FILTERS = ["すべて","カジュアル面談","書類選考","面接中","保留","辞退","NG","内定"];
+const DASHBOARD_FILTERS = ["すべて","カジュアル面談","書類選考","面接中","結果待ち","保留","辞退","NG","内定"];
 const NG_PHASE_FILTERS = ["すべて","書類","一次面接","二次面接","最終面接","カジュアル面談","その他"];
 const WITHDRAWAL_STAGES = ["カジュアル面談後辞退","書類提出前辞退","書類選考中辞退","面接前辞退","面接後辞退","内定辞退","辞退"];
 const REJECTION_STAGES = ["書類NG","1次面接NG","2次面接NG","最終面接NG","企業側見送り","その他NG","お見送り","見送り"];
@@ -494,7 +494,7 @@ const TYPE_DEFS = [
   { key:"面接前辞退",     isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
   { key:"面接後辞退",     isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
   { key:"内定辞退",       isStage:true,  bg:"bg-stone-100",   text:"text-stone-600",   dot:"bg-stone-400",   btn:"border-stone-300 bg-stone-100 text-stone-700"    },
-  { key:"求人クローズ",   isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
+  { key:"求人クローズ",   isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
   { key:"連絡終了",       isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
   { key:"その他終了",     isStage:true,  bg:"bg-slate-100",   text:"text-slate-600",   dot:"bg-slate-400",   btn:"border-slate-300 bg-slate-100 text-slate-700"    },
   { key:"お見送り",       isStage:true,  bg:"bg-red-50",      text:"text-red-600",     dot:"bg-red-400",     btn:"border-red-400 bg-red-50 text-red-700"           },
@@ -718,14 +718,21 @@ const normalizeStage = (stage) => {
   return HOLD_STAGE_ALIASES.some(alias => alias.toLowerCase() === value.toLowerCase()) ? HOLD_STAGE : value;
 };
 
-const normalizeSelectionPhase = (phase) => ({
-  "1次面接":"一次面接", "2次面接":"二次面接", "オファー":"オファー面談",
-}[phase] || phase || "");
+const normalizeSelectionPhase = (phase) => {
+  const value = String(phase || "").trim();
+  return ({
+    "1次面接":"一次面接", "2次面接":"二次面接", "オファー":"オファー面談",
+  })[value] || inferSelectionPhase(value) || value;
+};
 
-const normalizeResultStatus = (result) => ({
-  "見送り":"NG", "お見送り":"NG", "企業側見送り":"NG",
-  "予定":"進行中", "終了済み":"終了",
-}[result] || result || "");
+const normalizeResultStatus = (result) => {
+  const value = String(result || "").trim();
+  if (value.includes("結果待ち")) return "結果待ち";
+  return ({
+    "見送り":"NG", "お見送り":"NG", "企業側見送り":"NG",
+    "予定":"進行中", "終了済み":"終了",
+  })[value] || value;
+};
 
 function inferSelectionPhase(stage) {
   if (!stage) return "";
@@ -890,7 +897,9 @@ function isActiveLog(log) {
 
 function matchesDashboardFilter(log, filter) {
   if (filter === "すべて") return true;
-  return classifyCompany(log).dashboardCategory === filter;
+  const classified = classifyCompany(log);
+  if (filter === "結果待ち") return classified.result === "結果待ち";
+  return classified.dashboardCategory === filter;
 }
 
 // NG の判定も一覧・集計・CSV と同じ正規化済みのフェーズ/結果を使う。
@@ -1764,7 +1773,9 @@ function ListScreen({ logs, onAdd, onDetail, onImport, onOpenCriteria }) {
               {DASHBOARD_FILTERS.map(s=>(
                 <button key={s} onClick={()=>selectDashboardFilter(s)}
                   className={`flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-all ${
-                    dashboardFilter===s ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
+                    dashboardFilter===s
+                      ? (s === "結果待ち" ? "bg-indigo-600 text-white border-indigo-600" : "bg-blue-600 text-white border-blue-600")
+                      : "bg-white text-gray-500 border-gray-200 hover:border-gray-300"
                   }`}>{toDisplayLabel(s)}</button>
               ))}
             </div>
