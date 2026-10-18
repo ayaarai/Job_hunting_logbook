@@ -75,6 +75,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useRef } = React;
 
@@ -163,6 +164,7 @@ function buildSelectionProgress(logs) {
     withdrawalReason: log.withdrawalReason,
     rejectionReason: log.rejectionReason,
     statusNote: log.statusNote,
+    sharedNote: log.sharedNote || "",
     priority: log.priority,
     axisMatch: log.axisMatch,
     techExpectation: log.techExpectation,
@@ -225,7 +227,7 @@ function exportSelectionProgressBackupCsv(logs) {
     "企業名","職種・応募ポジション","応募経路","媒体","選考フェーズ","結果・判断","現在の状況","次回予定日","保留理由","辞退理由","見送り理由","補足メモ",
     "company","status","jobPosition","selectionPhase","resultStatus","resultDecision","priority","route","agent","media","withdrawalReason","rejectionReason","statusNote","axisMatch","techExpectation","improvementFit",
     "concerns","nextQuestions","postMeetingDecision","decisionReason","holdReason","holdDate","holdReviewDate","holdCategory",
-    "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles","createdAt","updatedAt"
+    "interviewDate","nextInterviewDate","interviewer","memo","dismissalReason","dismissalNote","timeline","materialFiles","createdAt","updatedAt","sharedNote"
   ];
   const rows = logs.map(log => {
     const item = buildSelectionProgress([log])[0];
@@ -234,7 +236,7 @@ function exportSelectionProgressBackupCsv(logs) {
     "職種・応募ポジション": log.jobPosition || "",
     "応募経路": normalizeExternalRoute(log.route),
     "媒体": log.media || "",
-    "現在の状況": buildMaynaviStatusText(log),
+    "現在の状況": getDisplayStatus(log),
     "選考フェーズ": getLogSelectionPhase(log),
     "結果・判断": getLogResultDecision(log),
     "次回予定日": getNextDate(log),
@@ -249,96 +251,96 @@ function exportSelectionProgressBackupCsv(logs) {
   downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-backup-${todayStamp()}.csv`);
 }
 
-function buildMaynaviStatusText(log) {
-  return getDisplayStatus(log);
+// 外部共有は許可した9列だけを組み立てる。内部メモへのフォールバックは禁止。
+const AGENT_COLUMNS = [
+  ["企業名", 28], ["職種・応募ポジション", 32], ["応募経路", 18],
+  ["媒体", 18], ["現在の状況", 24], ["選考フェーズ", 20],
+  ["次回予定日", 15], ["最終更新日", 15], ["共有用メモ", 45],
+];
+
+function getAgentSortPriority(log) {
+  const c = classifyCompany(log);
+  if (c.result === "NG") return 7;
+  if (c.result === "辞退") return 6;
+  if (c.result === "内定") return 5;
+  if (c.hold) return 4;
+  if (c.terminal || c.meetingOnly) return 8;
+  if (c.result === "結果待ち") return 3;
+  return ({ "カジュアル面談":0, "書類選考":1, "一次面接":2,
+    "二次面接":2, "最終面接":2, "オファー面談":2 })[c.phase] ?? 8;
 }
 
-function getExternalResultStatus(log) {
-  return toDisplayLabel(getLogResultDecision(log));
+function agentUpdatedTime(log) {
+  const value = Date.parse(log.updatedAt || getLastUpdatedDate(log));
+  return Number.isFinite(value) ? value : 0;
 }
 
-function exportMaynaviSelectionStatusCsv(logs) {
-  const headers = [
-    "企業名",
-    "職種・応募ポジション",
-    "応募経路",
-    "媒体",
-    "選考フェーズ",
-    "結果・判断",
-    "現在の状況",
-    "次回予定日",
-    "保留理由",
-    "辞退理由",
-    "見送り理由",
-    "補足メモ",
-  ];
-  const rows = logs.map(log => ({
-    "企業名": log.company || "",
-    "職種・応募ポジション": log.jobPosition || "",
-    "応募経路": normalizeExternalRoute(log.route),
-    "媒体": log.media || "",
-    "現在の状況": buildMaynaviStatusText(log),
-    "選考フェーズ": getLogSelectionPhase(log),
-    "結果・判断": getExternalResultStatus(log),
-    "次回予定日": getNextDate(log),
-    "保留理由": log.holdReason || "",
-    "辞退理由": log.withdrawalReason || "",
-    "見送り理由": log.rejectionReason || log.dismissalReason || "",
-    "補足メモ": [log.statusNote, _stripHtml(log.memo)].filter(Boolean).join("\n"),
-  }));
-  downloadCsvWithBom(buildCsv(headers, rows), `maynavi-selection-status-${todayStamp()}.csv`);
+function agentExcelDate(value) {
+  const day = dateOnly(value);
+  if (!day) return null;
+  const date = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day ? date : null;
 }
 
-function exportSelectionProgressExternalCsv(logs) {
-  const headers = [
-    "企業名",
-    "職種・応募ポジション",
-    "応募経路",
-    "媒体",
-    "選考フェーズ",
-    "結果・判断",
-    "現在の状況",
-    "次回予定日",
-    "保留理由",
-    "辞退理由",
-    "見送り理由",
-    "補足メモ",
-    "志望度・優先度",
-    "担当エージェント",
-    "転職軸との一致度",
-    "技術・業務内容への期待",
-    "魅力に感じた点",
-    "懸念点",
-    "次回確認したいこと",
-    "面談後メモ",
-    "応募判断",
-    "最終更新日",
-  ];
-  const rows = logs.map(log => ({
-    "企業名": log.company || "",
-    "職種・応募ポジション": log.jobPosition || "",
-    "応募経路": normalizeExternalRoute(log.route),
-    "媒体": log.media || "",
-    "現在の状況": buildMaynaviStatusText(log),
-    "選考フェーズ": getLogSelectionPhase(log),
-    "結果・判断": getExternalResultStatus(log),
-    "次回予定日": getNextDate(log),
-    "保留理由": log.holdReason || "",
-    "辞退理由": log.withdrawalReason || "",
-    "見送り理由": log.rejectionReason || log.dismissalReason || "",
-    "補足メモ": [log.statusNote, _stripHtml(log.memo)].filter(Boolean).join("\n"),
-    "志望度・優先度": log.priority || "",
-    "担当エージェント": log.agent || "",
-    "転職軸との一致度": log.axisMatch || "",
-    "技術・業務内容への期待": log.techExpectation || "",
-    "魅力に感じた点": log.improvement || log.improvementFit || "",
-    "懸念点": log.concerns || "",
-    "次回確認したいこと": log.nextQuestion || log.nextQuestions || "",
-    "面談後メモ": log.postMeeting || log.decisionReason || "",
-    "応募判断": log.decisionReach || log.postMeetingDecision || "",
-    "最終更新日": getLastUpdatedDate(log),
-  }));
-  downloadCsvWithBom(buildCsv(headers, rows), `selection-progress-external-${todayStamp()}.csv`);
+function buildAgentRows(logs) {
+  return [...logs].sort((a, b) =>
+    getAgentSortPriority(a) - getAgentSortPriority(b) || agentUpdatedTime(b) - agentUpdatedTime(a)
+  ).map(log => [
+    String(log.company || ""), String(log.jobPosition || ""),
+    normalizeExternalRoute(log.route), String(log.media || ""),
+    getDisplayStatus(log), toDisplayLabel(getLogSelectionPhase(log)),
+    agentExcelDate(getNextDate(log)), agentExcelDate(getLastUpdatedDate(log)),
+    String(log.sharedNote || ""),
+  ]);
+}
+
+async function createAgentWorkbook(logs) {
+  if (typeof ExcelJS === "undefined") throw new Error("ExcelJSの読込に失敗しました。通信環境を確認して再読込してください。");
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("選考進捗", {
+    views: [{ state:"frozen", ySplit:1 }],
+  });
+  const rows = buildAgentRows(logs);
+  sheet.columns = AGENT_COLUMNS.map(([, width]) => ({ width }));
+  if (rows.length) {
+    sheet.addTable({
+      name:"SelectionProgress", ref:"A1", headerRow:true, totalsRow:false,
+      style:{ theme:"TableStyleMedium2", showRowStripes:true },
+      columns:AGENT_COLUMNS.map(([name]) => ({ name, filterButton:true })), rows,
+    });
+  } else {
+    AGENT_COLUMNS.forEach(([name], i) => { sheet.getRow(1).getCell(i + 1).value = name; });
+    sheet.autoFilter = "A1:I1";
+  }
+  sheet.eachRow((row, index) => {
+    row.eachCell({ includeEmpty:true }, cell => {
+      cell.font = { name:"Yu Gothic", size:11 };
+      cell.alignment = { vertical:"middle", wrapText:true };
+      if (index === 1) {
+        cell.font = { name:"Yu Gothic", size:11, bold:true, color:{ argb:"FFFFFFFF" } };
+        cell.fill = { type:"pattern", pattern:"solid", fgColor:{ argb:"FF334155" } };
+      }
+    });
+    if (index === 1) row.height = 34;
+    else {
+      // 日本語の全角幅と改行を考慮し、折り返したメモも読みやすくする。
+      const lines = row.values.slice(1).map((value, i) => value instanceof Date ? 1 :
+        String(value ?? "").split("\n").reduce((sum, line) => sum + Math.max(1,
+          Math.ceil(Array.from(line).reduce((n, ch) => n + (ch.charCodeAt(0) > 255 ? 2 : 1), 0) / (AGENT_COLUMNS[i][1] - 2))), 0));
+      row.height = Math.min(409, Math.max(32, Math.max(...lines) * 16 + 8));
+    }
+  });
+  sheet.getColumn(7).numFmt = "yyyy/mm/dd";
+  sheet.getColumn(8).numFmt = "yyyy/mm/dd";
+  return workbook;
+}
+
+async function exportAgentSelectionProgressExcel(logs) {
+  const workbook = await createAgentWorkbook(logs);
+  const buffer = await workbook.xlsx.writeBuffer();
+  downloadBlob(new Blob([buffer], {
+    type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  }), `selection-progress-agent-${todayStamp()}.xlsx`);
 }
 
 // ファイル本体は IndexedDB、会社データにはメタデータだけを保持する。
@@ -646,6 +648,7 @@ const createLogDefaults = () => ({
   withdrawalReason:"",
   rejectionReason:"",
   statusNote:     "",
+  sharedNote:     "",
   priority:       "",
   ...COMPANY_DECISION_DEFAULTS,
   holdReason:     "",
@@ -1004,6 +1007,7 @@ const normalizeLog = (log) => {
     withdrawalReason: source.withdrawalReason ?? "",
     rejectionReason,
     statusNote: source.statusNote ?? source.externalNote ?? "",
+    sharedNote: typeof source.sharedNote === "string" ? source.sharedNote : "",
     holdReason,
     holdDate: source.holdDate ?? source.pendingDate ?? source.pausedAt ?? "",
     holdReviewDate: source.holdReviewDate ?? source.reviewDate ?? source.nextReviewDate ?? "",
@@ -1609,6 +1613,15 @@ function ActivityCriteriaScreen({ onBack }) {
 }
 
 function DataManagementPanel({ logs }) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const downloadAgentExcel = async () => {
+    setExporting(true);
+    setExportError("");
+    try { await exportAgentSelectionProgressExcel(logs); }
+    catch (error) { setExportError(error.message || "Excelの出力に失敗しました。再試行してください。"); }
+    finally { setExporting(false); }
+  };
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden mt-4">
       <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
@@ -1622,15 +1635,12 @@ function DataManagementPanel({ logs }) {
           <Ic n="Download" size={13}/>進捗JSON
         </button>
         <button
-          onClick={() => exportSelectionProgressExternalCsv(logs)}
-          className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-lg hover:bg-emerald-100 transition-colors">
-          <Ic n="Download" size={13}/>外部共有用CSVをダウンロード
+          onClick={downloadAgentExcel} disabled={exporting}
+          className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-lg hover:bg-emerald-100 transition-colors disabled:opacity-50">
+          <Ic n="Download" size={13}/>{exporting ? "Excelを作成中…" : "エージェント共有用Excelをダウンロード"}
         </button>
-        <button
-          onClick={() => exportMaynaviSelectionStatusCsv(logs)}
-          className="flex items-center justify-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-3 py-2 rounded-lg hover:bg-indigo-100 transition-colors">
-          <Ic n="Download" size={13}/>マイナビ共有用CSVをダウンロード
-        </button>
+        {exportError && <p role="alert" className="text-xs text-red-600">{exportError}</p>}
+        <p className="text-xs text-gray-500">進捗JSON：保存・復元用 ／ Excel：各転職エージェントへの共有用 ／ CSV：自分用バックアップ</p>
         <button
           onClick={() => exportSelectionProgressBackupCsv(logs)}
           className="flex items-center justify-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors">
@@ -2684,9 +2694,13 @@ function DetailScreen({ log, onBack, onEdit, onAddEvent, onUpdateEvent, onDelete
                 </FormField>
               </div>
             )}
-            <FormField label="補足メモ">
+            <FormField label="共有用メモ" hint="エージェント共有用Excelに出力されます。内部メモは転記されません。">
+              <textarea value={log.sharedNote || ""} onChange={e => updateStatus({ sharedNote:e.target.value })}
+                rows={3} className={inCls()+" resize-y"} placeholder="例）他社選考と比較中、条件面を確認中" />
+            </FormField>
+            <FormField label="補足メモ（内部用）">
               <textarea value={log.statusNote || ""} onChange={e => updateStatus({ statusNote:e.target.value })}
-                rows={3} className={inCls()+" resize-y"} placeholder="外部共有時に添える補足..." />
+                rows={3} className={inCls()+" resize-y"} placeholder="内部管理用の補足..." />
             </FormField>
           </div>
           <button
@@ -3252,7 +3266,8 @@ function CompanyForm({ initial, onBack, onSave, onDelete }) {
           {currentDecision==="保留" && <div className="p-4 bg-amber-50/40"><FormField label="保留理由"><textarea value={form.holdReason || ""} onChange={e=>set("holdReason",e.target.value)} rows={3} className={inCls()+" resize-y"}/></FormField></div>}
           {currentDecision==="辞退" && <div className="p-4 bg-stone-50"><FormField label="辞退理由"><textarea value={form.withdrawalReason || ""} onChange={e=>set("withdrawalReason",e.target.value)} rows={3} className={inCls()+" resize-y"}/></FormField></div>}
           {currentDecision==="NG" && <div className="p-4 bg-red-50/40"><FormField label="見送り理由"><textarea value={form.rejectionReason || form.dismissalReason || ""} onChange={e=>set("rejectionReason",e.target.value)} rows={3} className={inCls()+" resize-y"}/></FormField></div>}
-          <div className="p-4"><FormField label="補足メモ"><textarea value={form.statusNote || ""} onChange={e=>set("statusNote",e.target.value)} rows={3} className={inCls()+" resize-y"}/></FormField></div>
+          <div className="p-4"><FormField label="共有用メモ" hint="エージェント共有用Excelに出力されます"><textarea value={form.sharedNote || ""} onChange={e=>set("sharedNote",e.target.value)} rows={3} className={inCls()+" resize-y"}/></FormField></div>
+          <div className="p-4"><FormField label="補足メモ（内部用）"><textarea value={form.statusNote || ""} onChange={e=>set("statusNote",e.target.value)} rows={3} className={inCls()+" resize-y"}/></FormField></div>
 
           {/* 面接官 */}
           <div className="p-4">
